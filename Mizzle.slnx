@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="src/Mizzle/Mizzle.csproj" />
+  <Project Path="src/Mizzle.Postgres/Mizzle.Postgres.csproj" />
+  <Project Path="src/Mizzle.SqlServer/Mizzle.SqlServer.csproj" />
+  <Project Path="src/Mizzle.Generators/Mizzle.Generators.csproj" />
+  <Project Path="tests/Mizzle.Tests/Mizzle.Tests.csproj" />
+  <Project Path="tests/Mizzle.Integration.Tests/Mizzle.Integration.Tests.csproj" />
+  <Project Path="tests/Mizzle.Generators.Tests/Mizzle.Generators.Tests.csproj" />
+</Solution>

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Mizzle.Postgres</PackageId>
+    <Description>PostgreSQL dialect, emitter, and Npgsql execute path for Mizzle.</Description>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="9.0.3" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.8" />
+    <ProjectReference Include="..\Mizzle\Mizzle.csproj" />
+    <ProjectReference Include="..\Mizzle.Generators\Mizzle.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <Import Project="..\Mizzle.Generators\build\Mizzle.Generators.props" />
+
+</Project>

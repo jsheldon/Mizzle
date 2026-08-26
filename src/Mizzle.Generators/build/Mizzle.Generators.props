@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Mizzle.Generated.Interceptors</InterceptorsNamespaces>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="MizzleQueryMode" />
+  </ItemGroup>
+</Project>
