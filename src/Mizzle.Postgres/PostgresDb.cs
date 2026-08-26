@@ -140,6 +140,37 @@ public sealed class PostgresDb : IQueryExecutor
         }
     }
 
+    public async Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(
+        string sql,
+        ParamBag bag,
+        Func<DbDataReader, T> map,
+        QueryOptions? overlay,
+        CancellationToken cancellationToken)
+    {
+        var rows = new List<T>();
+        if (_ambient.Value is { } ambient)
+        {
+            await using var cmd = CreateCommand(ambient.Connection, sql, bag, overlay, ambient.DbTransaction);
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                rows.Add(map(reader));
+            }
+
+            return rows;
+        }
+
+        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var outer = CreateCommand(conn, sql, bag, overlay, transaction: null);
+        await using var outerReader = await outer.ExecuteReaderAsync(cancellationToken);
+        while (await outerReader.ReadAsync(cancellationToken))
+        {
+            rows.Add(map(outerReader));
+        }
+
+        return rows;
+    }
+
     private string Compile(Query query, ParamBag bag)
         => _sqlCache.GetOrAdd(query, q => _emitter.Emit(q, bag).Sql);
 
@@ -242,6 +273,14 @@ public sealed class PostgresDb : IQueryExecutor
             QueryOptions? overlay,
             CancellationToken cancellationToken)
             => _db.StreamAsync(query, bag, map, overlay, cancellationToken);
+
+        public Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(
+            string sql,
+            ParamBag bag,
+            Func<DbDataReader, T> map,
+            QueryOptions? overlay,
+            CancellationToken cancellationToken)
+            => _db.QueryPrecompiledAsync(sql, bag, map, overlay, cancellationToken);
 
         public Task LockAsync(string resource, CancellationToken cancellationToken = default)
             => PgLock.AcquireAsync(_db, resource, cancellationToken);

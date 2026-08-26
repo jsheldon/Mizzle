@@ -196,6 +196,13 @@ public sealed class SelectBuilder
         CancellationToken cancellationToken = default)
         => Executor().StreamAsync(Build(), Parameters, map, Overlay, cancellationToken);
 
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public Task<IReadOnlyList<T>> ToListPrecompiledAsync<T>(
+        string sql,
+        Func<DbDataReader, T> map,
+        CancellationToken cancellationToken = default)
+        => Executor().QueryPrecompiledAsync(sql, Parameters, map, Overlay, cancellationToken);
+
     public Task<Page<T>> ToPageAsync<T>(
         Func<DbDataReader, T> map,
         bool includeTotal = false,
