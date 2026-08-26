@@ -209,11 +209,20 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
         if (select.Limit is not null || select.Offset is not null)
         {
+            if (select.OrderBy.Count == 0)
+            {
+                throw new InvalidOperationException("SQL Server requires ORDER BY for OFFSET/FETCH.");
+            }
+
             sql.Append(" OFFSET ");
             sql.Append(select.Offset ?? 0);
-            sql.Append(" ROWS FETCH NEXT ");
-            sql.Append(select.Limit ?? 0);
-            sql.Append(" ROWS ONLY");
+            sql.Append(" ROWS");
+            if (select.Limit is not null)
+            {
+                sql.Append(" FETCH NEXT ");
+                sql.Append(select.Limit.Value);
+                sql.Append(" ROWS ONLY");
+            }
         }
     }
 
