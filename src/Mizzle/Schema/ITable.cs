@@ -8,6 +8,7 @@ public interface ITable
     string? Schema { get; }
     DialectKind Dialect { get; }
     string Alias { get; }
+    IReadOnlyList<TableConstraint> Constraints { get; }
     IReadOnlyList<IColumn> Columns { get; }
     FromSource ToFrom();
 }

@@ -7,12 +7,13 @@ public sealed class UpdateBuilder
 {
     private readonly ITable _table;
     private readonly IQueryExecutor? _executor;
-    private readonly IReadOnlyList<(string Column, Expr Value)> _set;
+    private readonly EquatableList<(string Column, Expr Value)> _set;
     private readonly Expr? _where;
+    private readonly EquatableList<SelectItem> _returning;
     private readonly int? _expect;
 
     public UpdateBuilder(ITable table, ParamBag parameters, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, parameters, executor, overlay, [], null, null)
+        : this(table, parameters, executor, overlay, [], null, [], null)
     {
     }
 
@@ -21,8 +22,9 @@ public sealed class UpdateBuilder
         ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
-        IReadOnlyList<(string Column, Expr Value)> set,
+        EquatableList<(string Column, Expr Value)> set,
         Expr? where,
+        EquatableList<SelectItem> returning,
         int? expect)
     {
         _table = table;
@@ -31,6 +33,7 @@ public sealed class UpdateBuilder
         Overlay = overlay;
         _set = set;
         _where = where;
+        _returning = returning;
         _expect = expect;
     }
 
@@ -53,6 +56,9 @@ public sealed class UpdateBuilder
         return Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), param));
     }
 
+    public UpdateBuilder Returning(params IColumn[] columns)
+        => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
+
     public UpdateBuilder Expect(int affectedRows) => Copy(expect: affectedRows);
 
     public UpdateBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
@@ -65,8 +71,13 @@ public sealed class UpdateBuilder
             throw new InvalidOperationException("SET is required.");
         }
 
-        return new UpdateQuery(_table.ToFrom(), _set, _where, [], [], false);
+        return new UpdateQuery(_table.ToFrom(), _set, _where, _returning, [], false);
     }
+
+    public Task<IReadOnlyList<T>> ToListAsync<T>(
+        Func<System.Data.Common.DbDataReader, T> map,
+        CancellationToken cancellationToken = default)
+        => Executor().QueryAsync(Build(), Parameters, map, Overlay, cancellationToken);
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
     {
@@ -121,8 +132,9 @@ public sealed class UpdateBuilder
     }
 
     private UpdateBuilder Copy(
-        IReadOnlyList<(string Column, Expr Value)>? set = null,
+        EquatableList<(string Column, Expr Value)>? set = null,
         Expr? where = null,
+        EquatableList<SelectItem>? returning = null,
         int? expect = null,
         QueryOptions? overlay = null)
         => new(
@@ -132,5 +144,6 @@ public sealed class UpdateBuilder
             overlay ?? Overlay,
             set ?? _set,
             where ?? _where,
+            returning ?? _returning,
             expect ?? _expect);
 }

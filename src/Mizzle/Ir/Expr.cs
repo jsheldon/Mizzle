@@ -31,11 +31,11 @@ public enum UnaryOp
     IsNotNull
 }
 
-public sealed record InExpr(Expr Needle, IReadOnlyList<Expr> Haystack) : Expr;
+public sealed record InExpr(Expr Needle, EquatableList<Expr> Haystack) : Expr;
 
 public sealed record BetweenExpr(Expr Value, Expr Lo, Expr Hi) : Expr;
 
-public sealed record CoalesceExpr(IReadOnlyList<Expr> Args) : Expr;
+public sealed record CoalesceExpr(EquatableList<Expr> Args) : Expr;
 
 public enum AggregateKind
 {
@@ -48,7 +48,7 @@ public enum AggregateKind
 
 public sealed record AggregateExpr(AggregateKind Kind, Expr? Arg) : Expr;
 
-public sealed record CallExpr(string Name, IReadOnlyList<Expr> Args, DialectKind Dialect) : Expr;
+public sealed record CallExpr(string Name, EquatableList<Expr> Args, DialectKind Dialect) : Expr;
 
 public static class QueryShape
 {

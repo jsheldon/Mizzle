@@ -36,6 +36,9 @@ internal static class GeneratorTestHost
     public static string Generated(GeneratorDriverRunResult result)
         => string.Join("\n", result.Results.SelectMany(r => r.GeneratedSources).Select(s => s.SourceText.ToString()));
 
+    public static CSharpCompilation Compile(string source)
+        => CreateCompilation(source, ParseOptions());
+
     private static CSharpParseOptions ParseOptions()
         => new CSharpParseOptions(LanguageVersion.Latest)
             .WithFeatures([new KeyValuePair<string, string>("InterceptorsNamespaces", "Mizzle.Generated.Interceptors")]);

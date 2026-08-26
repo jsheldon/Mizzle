@@ -5,11 +5,39 @@ public sealed class SqlServerEmitterTests
     [Fact]
     public void SqlServer_offset_fetch()
     {
-        var query = BaseSelect() with { Limit = 10, Offset = 20 };
+        var query = BaseSelect() with
+        {
+            Limit = 10,
+            Offset = 20,
+            OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
+        };
         var sql = new SqlServerEmitter().Emit(query, new ParamBag());
         Assert.Equal(
-            "SELECT [u].[email] FROM [public].[users] AS [u] OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY",
+            "SELECT [u].[email] FROM [public].[users] AS [u] ORDER BY [u].[email] OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY",
             sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_offset_only_returns_remainder()
+    {
+        var query = BaseSelect() with
+        {
+            Offset = 20,
+            OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
+        };
+        var sql = new SqlServerEmitter().Emit(query, new ParamBag());
+        Assert.Equal(
+            "SELECT [u].[email] FROM [public].[users] AS [u] ORDER BY [u].[email] OFFSET 20 ROWS",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_paging_without_order_by_throws()
+    {
+        var query = BaseSelect() with { Limit = 10 };
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new SqlServerEmitter().Emit(query, new ParamBag()));
+        Assert.Contains("ORDER BY", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

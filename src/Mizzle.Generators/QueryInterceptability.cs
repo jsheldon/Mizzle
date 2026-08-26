@@ -20,95 +20,25 @@ internal static class QueryInterceptability
         }
 
         var typeName = method.ContainingType.ToDisplayString();
-        return typeName is "Mizzle.Fluent.SelectBuilder" or "Mizzle.Fluent.UpdateBuilder"
+        return typeName is "Mizzle.Fluent.SelectBuilder"
+            or "Mizzle.Fluent.InsertBuilder"
+            or "Mizzle.Fluent.UpdateBuilder"
+            or "Mizzle.Fluent.DeleteBuilder"
             || Implements(method.ContainingType, "Mizzle", "IQueryExecutor");
     }
 
+    // Single source of truth for generator and analyzer: a terminator is
+    // interceptable exactly when the generator can bake SQL for it.
     public static bool IsInterceptableFluentChain(InvocationExpressionSyntax terminator, SemanticModel model)
     {
-        if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol method || !IsQueryTerminator(method))
+        if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol { Name: "ToListAsync" } method
+            || method.ContainingType.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
         {
             return false;
         }
 
-        if (terminator.Expression is not MemberAccessExpressionSyntax member)
-        {
-            return false;
-        }
-
-        var current = member.Expression;
-        var sawSelect = false;
-        while (current is InvocationExpressionSyntax invocation)
-        {
-            if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol invocationMethod)
-            {
-                return false;
-            }
-
-            if (invocationMethod.Name == "Select")
-            {
-                sawSelect = true;
-            }
-
-            if (!AreVisibleArguments(invocation, model))
-            {
-                return false;
-            }
-
-            if (invocation.Expression is MemberAccessExpressionSyntax next)
-            {
-                current = next.Expression;
-                continue;
-            }
-
-            return false;
-        }
-
-        return sawSelect && current is IdentifierNameSyntax;
-    }
-
-    private static bool AreVisibleArguments(InvocationExpressionSyntax invocation, SemanticModel model)
-    {
-        foreach (var argument in invocation.ArgumentList.Arguments)
-        {
-            if (!IsVisibleArgument(argument.Expression, model))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static bool IsVisibleArgument(ExpressionSyntax expression, SemanticModel model)
-    {
-        expression = expression.Trim();
-        switch (expression)
-        {
-            case LiteralExpressionSyntax:
-            case IdentifierNameSyntax:
-            case DefaultExpressionSyntax:
-                return true;
-            case MemberAccessExpressionSyntax member
-                when model.GetSymbolInfo(member).Symbol is IPropertySymbol property && IsColumnType(property.Type):
-                return true;
-            case InvocationExpressionSyntax invocation
-                when model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Name: "ToFrom" or "ToRef" }:
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    private static bool IsColumnType(ITypeSymbol type)
-    {
-        if (type is INamedTypeSymbol { TypeArguments.Length: 1 } named
-            && named.Name is "PgColumn" or "SqlColumn")
-        {
-            return true;
-        }
-
-        return Implements(type, "Mizzle.Schema", "IColumn");
+        var spec = BakedChainWalker.TryGetSpec(terminator, model);
+        return spec is not null && BakedSqlEmitter.Emit(spec) is not null;
     }
 
     private static bool Implements(ITypeSymbol type, string ns, string name)
@@ -128,7 +58,4 @@ internal static class QueryInterceptability
 
         return false;
     }
-
-    private static ExpressionSyntax Trim(this ExpressionSyntax expression)
-        => expression is ParenthesizedExpressionSyntax paren ? paren.Expression.Trim() : expression;
 }

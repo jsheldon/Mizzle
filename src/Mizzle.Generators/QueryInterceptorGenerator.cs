@@ -36,7 +36,14 @@ public sealed class QueryInterceptorGenerator : IIncrementalGenerator
             return null;
         }
 
-        if (!QueryInterceptability.IsInterceptableFluentChain(invocation, context.SemanticModel))
+        var spec = BakedChainWalker.TryGetSpec(invocation, context.SemanticModel);
+        if (spec is null)
+        {
+            return null;
+        }
+
+        var sql = BakedSqlEmitter.Emit(spec);
+        if (sql is null)
         {
             return null;
         }
@@ -50,7 +57,7 @@ public sealed class QueryInterceptorGenerator : IIncrementalGenerator
 
         var attribute = location.GetInterceptsLocationAttributeSyntax();
 #pragma warning restore RSEXPERIMENTAL002
-        return new InterceptorSpec(attribute);
+        return new InterceptorSpec(attribute, sql);
     }
 
     private static void Generate(SourceProductionContext context, ImmutableArray<InterceptorSpec> specs)
@@ -65,24 +72,33 @@ public sealed class QueryInterceptorGenerator : IIncrementalGenerator
         sb.AppendLine("#nullable enable");
         sb.AppendLine("namespace Mizzle.Generated.Interceptors");
         sb.AppendLine("{");
-        sb.AppendLine("    public static class SelectToListInterceptors");
+        sb.AppendLine("    public static class MizzleBakedQueries");
         sb.AppendLine("    {");
-        foreach (var spec in specs)
+        var groups = specs.GroupBy(s => s.Sql).ToList();
+        for (var i = 0; i < groups.Count; i++)
         {
-            sb.Append("        ");
-            sb.AppendLine(spec.AttributeSyntax);
+            if (i > 0)
+            {
+                sb.AppendLine();
+            }
+
+            foreach (var spec in groups[i].Select(s => s.AttributeSyntax).Distinct())
+            {
+                sb.Append("        ");
+                sb.AppendLine(spec);
+            }
+
+            sb.Append("        public static global::System.Threading.Tasks.Task<global::System.Collections.Generic.IReadOnlyList<T>> ToListAsync");
+            sb.Append(i);
+            sb.AppendLine("<T>(");
+            sb.AppendLine("            this global::Mizzle.Fluent.SelectBuilder builder,");
+            sb.AppendLine("            global::System.Func<global::System.Data.Common.DbDataReader, T> map,");
+            sb.AppendLine("            global::System.Threading.CancellationToken cancellationToken = default)");
+            sb.Append("            => builder.ToListPrecompiledAsync(");
+            sb.Append(SymbolDisplay.FormatLiteral(groups[i].Key, quote: true));
+            sb.AppendLine(", map, cancellationToken);");
         }
 
-        sb.AppendLine("        public static global::System.Threading.Tasks.Task<global::System.Collections.Generic.IReadOnlyList<T>> ToListAsync<T>(");
-        sb.AppendLine("            this global::Mizzle.Fluent.SelectBuilder builder,");
-        sb.AppendLine("            global::System.Func<global::System.Data.Common.DbDataReader, T> map,");
-        sb.AppendLine("            global::System.Threading.CancellationToken cancellationToken = default)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            using (global::Mizzle.InterceptorScope.Enter())");
-        sb.AppendLine("            {");
-        sb.AppendLine("                return builder.ToListAsync(map, cancellationToken);");
-        sb.AppendLine("            }");
-        sb.AppendLine("        }");
         sb.AppendLine("    }");
         sb.AppendLine("}");
 
@@ -91,8 +107,14 @@ public sealed class QueryInterceptorGenerator : IIncrementalGenerator
 
     private sealed class InterceptorSpec
     {
-        public InterceptorSpec(string attributeSyntax) => AttributeSyntax = attributeSyntax;
+        public InterceptorSpec(string attributeSyntax, string sql)
+        {
+            AttributeSyntax = attributeSyntax;
+            Sql = sql;
+        }
 
         public string AttributeSyntax { get; }
+
+        public string Sql { get; }
     }
 }

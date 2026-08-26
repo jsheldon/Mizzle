@@ -37,8 +37,38 @@ public sealed class SqlServerEmitter : ISqlEmitter
         return new CompiledSql(sql.ToString(), parameters.Values);
     }
 
+    private static void WriteWithPrefix(StringBuilder sql, IReadOnlyList<CteClause> with)
+    {
+        if (with.Count == 0)
+        {
+            return;
+        }
+
+        sql.Append("WITH ");
+        for (var i = 0; i < with.Count; i++)
+        {
+            if (i > 0)
+            {
+                sql.Append(", ");
+            }
+
+            sql.Append(Quote(with[i].Name));
+            sql.Append(" AS (");
+            WriteSelect(sql, with[i].Query, includeWith: false);
+            sql.Append(')');
+        }
+
+        sql.Append(' ');
+    }
+
     private static void WriteInsert(StringBuilder sql, InsertQuery insert)
     {
+        if (insert.ValuesRows.Count > 0 == insert.FromSelect is not null)
+        {
+            throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
+        }
+
+        WriteWithPrefix(sql, insert.With);
         sql.Append("INSERT INTO ");
         sql.Append(Table(insert.Into));
         sql.Append(" (");
@@ -50,12 +80,21 @@ public sealed class SqlServerEmitter : ISqlEmitter
             sql.Append(string.Join(", ", insert.Returning.Select(i => OutputItem(i, "INSERTED"))));
         }
 
-        sql.Append(" VALUES ");
-        sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        if (insert.FromSelect is not null)
+        {
+            sql.Append(' ');
+            WriteSelect(sql, insert.FromSelect, includeWith: false);
+        }
+        else
+        {
+            sql.Append(" VALUES ");
+            sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        }
     }
 
     private static void WriteUpdate(StringBuilder sql, UpdateQuery update)
     {
+        WriteWithPrefix(sql, update.With);
         sql.Append("UPDATE ");
         sql.Append(Table(update.Table));
         sql.Append(" SET ");
@@ -75,6 +114,7 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
     private static void WriteDelete(StringBuilder sql, DeleteQuery delete)
     {
+        WriteWithPrefix(sql, delete.With);
         sql.Append("DELETE FROM ");
         sql.Append(Table(delete.From));
         if (delete.Returning.Count > 0)
@@ -105,24 +145,9 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
     private static void WriteSelect(StringBuilder sql, SelectQuery select, bool includeWith)
     {
-        if (includeWith && select.With.Count > 0)
+        if (includeWith)
         {
-            sql.Append("WITH ");
-            for (var i = 0; i < select.With.Count; i++)
-            {
-                if (i > 0)
-                {
-                    sql.Append(", ");
-                }
-
-                var cte = select.With[i];
-                sql.Append(Quote(cte.Name));
-                sql.Append(" AS (");
-                WriteSelect(sql, cte.Query, includeWith: false);
-                sql.Append(')');
-            }
-
-            sql.Append(' ');
+            WriteWithPrefix(sql, select.With);
         }
 
         WriteSelectCore(sql, select);
@@ -184,11 +209,20 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
         if (select.Limit is not null || select.Offset is not null)
         {
+            if (select.OrderBy.Count == 0)
+            {
+                throw new InvalidOperationException("SQL Server requires ORDER BY for OFFSET/FETCH.");
+            }
+
             sql.Append(" OFFSET ");
             sql.Append(select.Offset ?? 0);
-            sql.Append(" ROWS FETCH NEXT ");
-            sql.Append(select.Limit ?? 0);
-            sql.Append(" ROWS ONLY");
+            sql.Append(" ROWS");
+            if (select.Limit is not null)
+            {
+                sql.Append(" FETCH NEXT ");
+                sql.Append(select.Limit.Value);
+                sql.Append(" ROWS ONLY");
+            }
         }
     }
 
@@ -252,7 +286,8 @@ public sealed class SqlServerEmitter : ISqlEmitter
             BinaryOp.And => "AND",
             BinaryOp.Or => "OR",
             BinaryOp.Like => "LIKE",
-            BinaryOp.ILike => "ILIKE",
+            BinaryOp.ILike => throw new UnsupportedFeatureException(
+                Feature.ILike, DialectKind.SqlServer, FeatureSupport.WhoSupports(Feature.ILike)),
             _ => throw new NotSupportedException($"Unsupported operator {bin.Op}.")
         };
 

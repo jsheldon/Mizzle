@@ -37,14 +37,54 @@ public sealed class PgEmitter : ISqlEmitter
         return new CompiledSql(sql.ToString(), parameters.Values);
     }
 
+    private static void WriteWithPrefix(StringBuilder sql, IReadOnlyList<CteClause> with, bool recursiveWith)
+    {
+        if (with.Count == 0)
+        {
+            return;
+        }
+
+        sql.Append(recursiveWith ? "WITH RECURSIVE " : "WITH ");
+        for (var i = 0; i < with.Count; i++)
+        {
+            if (i > 0)
+            {
+                sql.Append(", ");
+            }
+
+            sql.Append(Quote(with[i].Name));
+            sql.Append(" AS (");
+            WriteSelect(sql, with[i].Query, includeWith: false);
+            sql.Append(')');
+        }
+
+        sql.Append(' ');
+    }
+
     private static void WriteInsert(StringBuilder sql, InsertQuery insert)
     {
+        if (insert.ValuesRows.Count > 0 == insert.FromSelect is not null)
+        {
+            throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
+        }
+
+        WriteWithPrefix(sql, insert.With, insert.RecursiveWith);
         sql.Append("INSERT INTO ");
         sql.Append(Table(insert.Into));
         sql.Append(" (");
         sql.Append(string.Join(", ", insert.Columns.Select(Quote)));
-        sql.Append(") VALUES ");
-        sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        sql.Append(')');
+        if (insert.FromSelect is not null)
+        {
+            sql.Append(' ');
+            WriteSelect(sql, insert.FromSelect, includeWith: false);
+        }
+        else
+        {
+            sql.Append(" VALUES ");
+            sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        }
+
         if (insert.Returning.Count > 0)
         {
             sql.Append(" RETURNING ");
@@ -54,6 +94,7 @@ public sealed class PgEmitter : ISqlEmitter
 
     private static void WriteUpdate(StringBuilder sql, UpdateQuery update)
     {
+        WriteWithPrefix(sql, update.With, update.RecursiveWith);
         sql.Append("UPDATE ");
         sql.Append(Table(update.Table));
         sql.Append(" AS ");
@@ -75,6 +116,7 @@ public sealed class PgEmitter : ISqlEmitter
 
     private static void WriteDelete(StringBuilder sql, DeleteQuery delete)
     {
+        WriteWithPrefix(sql, delete.With, delete.RecursiveWith);
         sql.Append("DELETE FROM ");
         sql.Append(Table(delete.From));
         sql.Append(" AS ");
@@ -97,24 +139,9 @@ public sealed class PgEmitter : ISqlEmitter
 
     private static void WriteSelect(StringBuilder sql, SelectQuery select, bool includeWith)
     {
-        if (includeWith && select.With.Count > 0)
+        if (includeWith)
         {
-            sql.Append(select.RecursiveWith ? "WITH RECURSIVE " : "WITH ");
-            for (var i = 0; i < select.With.Count; i++)
-            {
-                if (i > 0)
-                {
-                    sql.Append(", ");
-                }
-
-                var cte = select.With[i];
-                sql.Append(Quote(cte.Name));
-                sql.Append(" AS (");
-                WriteSelect(sql, cte.Query, includeWith: false);
-                sql.Append(')');
-            }
-
-            sql.Append(' ');
+            WriteWithPrefix(sql, select.With, select.RecursiveWith);
         }
 
         WriteSelectCore(sql, select);

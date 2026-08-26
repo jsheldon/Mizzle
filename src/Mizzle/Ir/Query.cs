@@ -19,43 +19,43 @@ public sealed record OrderByItem(Expr Expr, bool Descending);
 public sealed record CteClause(string Name, SelectQuery Query);
 
 public sealed record SelectQuery(
-    IReadOnlyList<SelectItem> Select,
+    EquatableList<SelectItem> Select,
     FromSource From,
-    IReadOnlyList<JoinClause> Joins,
+    EquatableList<JoinClause> Joins,
     Expr? Where,
-    IReadOnlyList<OrderByItem> OrderBy,
+    EquatableList<OrderByItem> OrderBy,
     int? Limit,
     int? Offset,
     bool Distinct,
-    IReadOnlyList<CteClause> With,
+    EquatableList<CteClause> With,
     bool RecursiveWith,
-    IReadOnlyList<SelectQuery> UnionAll,
-    IReadOnlyList<Expr>? GroupBy = null,
+    EquatableList<SelectQuery> UnionAll,
+    EquatableList<Expr>? GroupBy = null,
     Expr? Having = null,
     bool WindowCount = false) : Query;
 
 public sealed record InsertQuery(
     FromSource Into,
-    IReadOnlyList<string> Columns,
-    IReadOnlyList<IReadOnlyList<Expr>> ValuesRows,
+    EquatableList<string> Columns,
+    EquatableList<EquatableList<Expr>> ValuesRows,
     SelectQuery? FromSelect,
-    IReadOnlyList<SelectItem> Returning,
-    IReadOnlyList<CteClause> With,
+    EquatableList<SelectItem> Returning,
+    EquatableList<CteClause> With,
     bool RecursiveWith) : Query;
 
 public sealed record UpdateQuery(
     FromSource Table,
-    IReadOnlyList<(string Column, Expr Value)> Set,
+    EquatableList<(string Column, Expr Value)> Set,
     Expr? Where,
-    IReadOnlyList<SelectItem> Returning,
-    IReadOnlyList<CteClause> With,
+    EquatableList<SelectItem> Returning,
+    EquatableList<CteClause> With,
     bool RecursiveWith) : Query;
 
 public sealed record DeleteQuery(
     FromSource From,
     Expr? Where,
-    IReadOnlyList<SelectItem> Returning,
-    IReadOnlyList<CteClause> With,
+    EquatableList<SelectItem> Returning,
+    EquatableList<CteClause> With,
     bool RecursiveWith) : Query;
 
 public sealed record LockQuery(string Resource) : Query;

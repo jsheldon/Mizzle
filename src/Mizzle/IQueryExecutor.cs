@@ -24,4 +24,11 @@ public interface IQueryExecutor
         Func<DbDataReader, T> map,
         QueryOptions? overlay,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(
+        string sql,
+        ParamBag bag,
+        Func<DbDataReader, T> map,
+        QueryOptions? overlay,
+        CancellationToken cancellationToken);
 }

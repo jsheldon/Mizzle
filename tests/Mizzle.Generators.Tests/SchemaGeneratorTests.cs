@@ -26,6 +26,26 @@ public sealed class SchemaGeneratorTests
     }
 
     [Fact]
+    public void Chained_modifiers_still_classify_identity()
+    {
+        const string source = """
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public sealed class Users : PgTable<Users>
+            {
+                public Users() : base("users", "public", "u") { }
+                public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
+                public PgColumn<string> Email { get; } = Text("email").NotNull();
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(source));
+        Assert.Contains("record NewUser(string Email)", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Reports_MIZ001_when_pg_table_has_sql_column()
     {
         const string source = """

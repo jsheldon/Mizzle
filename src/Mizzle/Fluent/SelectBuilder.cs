@@ -7,17 +7,17 @@ namespace Mizzle.Fluent;
 
 public sealed class SelectBuilder
 {
-    private readonly IReadOnlyList<SelectItem> _select;
+    private readonly EquatableList<SelectItem> _select;
     private readonly FromSource? _from;
-    private readonly IReadOnlyList<JoinClause> _joins;
+    private readonly EquatableList<JoinClause> _joins;
     private readonly Expr? _where;
-    private readonly IReadOnlyList<OrderByItem> _orderBy;
+    private readonly EquatableList<OrderByItem> _orderBy;
     private readonly int? _limit;
     private readonly int? _offset;
     private readonly bool _distinct;
-    private readonly IReadOnlyList<CteClause> _with;
+    private readonly EquatableList<CteClause> _with;
     private readonly bool _recursiveWith;
-    private readonly IReadOnlyList<SelectQuery> _unionAll;
+    private readonly EquatableList<SelectQuery> _unionAll;
 
     private readonly IQueryExecutor? _executor;
 
@@ -30,17 +30,17 @@ public sealed class SelectBuilder
         ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
-        IReadOnlyList<SelectItem> select,
+        EquatableList<SelectItem> select,
         FromSource? from,
-        IReadOnlyList<JoinClause> joins,
+        EquatableList<JoinClause> joins,
         Expr? where,
-        IReadOnlyList<OrderByItem> orderBy,
+        EquatableList<OrderByItem> orderBy,
         int? limit,
         int? offset,
         bool distinct,
-        IReadOnlyList<CteClause> with,
+        EquatableList<CteClause> with,
         bool recursiveWith,
-        IReadOnlyList<SelectQuery> unionAll)
+        EquatableList<SelectQuery> unionAll)
     {
         Parameters = parameters;
         _executor = executor;
@@ -63,10 +63,10 @@ public sealed class SelectBuilder
     public QueryOptions? Overlay { get; }
 
     public SelectBuilder Select(params ColumnRef[] columns)
-        => Copy(select: columns.Select(c => new SelectItem(c, null)).ToList());
+        => Copy(select: [..columns.Select(c => new SelectItem(c, null))]);
 
     public SelectBuilder Select(params IColumn[] columns)
-        => Copy(select: columns.Select(c => new SelectItem(c.ToRef(), null)).ToList());
+        => Copy(select: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 
@@ -196,6 +196,13 @@ public sealed class SelectBuilder
         CancellationToken cancellationToken = default)
         => Executor().StreamAsync(Build(), Parameters, map, Overlay, cancellationToken);
 
+    [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
+    public Task<IReadOnlyList<T>> ToListPrecompiledAsync<T>(
+        string sql,
+        Func<DbDataReader, T> map,
+        CancellationToken cancellationToken = default)
+        => Executor().QueryPrecompiledAsync(sql, Parameters, map, Overlay, cancellationToken);
+
     public Task<Page<T>> ToPageAsync<T>(
         Func<DbDataReader, T> map,
         bool includeTotal = false,
@@ -244,17 +251,17 @@ public sealed class SelectBuilder
         => _executor ?? throw new InvalidOperationException("This query is not bound to a database.");
 
     private SelectBuilder Copy(
-        IReadOnlyList<SelectItem>? select = null,
+        EquatableList<SelectItem>? select = null,
         FromSource? from = null,
-        IReadOnlyList<JoinClause>? joins = null,
+        EquatableList<JoinClause>? joins = null,
         Expr? where = null,
-        IReadOnlyList<OrderByItem>? orderBy = null,
+        EquatableList<OrderByItem>? orderBy = null,
         int? limit = null,
         int? offset = null,
         bool? distinct = null,
-        IReadOnlyList<CteClause>? with = null,
+        EquatableList<CteClause>? with = null,
         bool? recursiveWith = null,
-        IReadOnlyList<SelectQuery>? unionAll = null,
+        EquatableList<SelectQuery>? unionAll = null,
         QueryOptions? overlay = null)
         => new(
             Parameters,
