@@ -29,6 +29,12 @@ public sealed class SqlDb : IQueryExecutor
     public UpdateBuilder Update(ITable table)
         => new UpdateBuilder(table, new ParamBag(), this);
 
+    public InsertBuilder InsertInto(ITable table)
+        => new(table, new ParamBag(), this);
+
+    public DeleteBuilder DeleteFrom(ITable table)
+        => new(table, new ParamBag(), this);
+
     public Task Transaction(Func<IMizzleTransaction, Task> body, CancellationToken cancellationToken = default)
         => Transaction(async tx =>
         {
