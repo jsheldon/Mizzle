@@ -63,13 +63,28 @@ public sealed class PgEmitter : ISqlEmitter
 
     private static void WriteInsert(StringBuilder sql, InsertQuery insert)
     {
+        if (insert.ValuesRows.Count > 0 == insert.FromSelect is not null)
+        {
+            throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
+        }
+
         WriteWithPrefix(sql, insert.With, insert.RecursiveWith);
         sql.Append("INSERT INTO ");
         sql.Append(Table(insert.Into));
         sql.Append(" (");
         sql.Append(string.Join(", ", insert.Columns.Select(Quote)));
-        sql.Append(") VALUES ");
-        sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        sql.Append(')');
+        if (insert.FromSelect is not null)
+        {
+            sql.Append(' ');
+            WriteSelect(sql, insert.FromSelect, includeWith: false);
+        }
+        else
+        {
+            sql.Append(" VALUES ");
+            sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        }
+
         if (insert.Returning.Count > 0)
         {
             sql.Append(" RETURNING ");

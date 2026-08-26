@@ -68,6 +68,19 @@ public static class FeatureCollector
         {
             case InsertQuery insert:
                 CollectWriteMeta(insert.With, insert.RecursiveWith, insert.Returning, features);
+                if (insert.FromSelect is not null)
+                {
+                    CollectSelect(insert.FromSelect, features);
+                }
+
+                foreach (var row in insert.ValuesRows)
+                {
+                    foreach (var value in row)
+                    {
+                        CollectExpr(value, features);
+                    }
+                }
+
                 break;
             case UpdateQuery update:
                 CollectWriteMeta(update.With, update.RecursiveWith, update.Returning, features);

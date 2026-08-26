@@ -63,6 +63,11 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
     private static void WriteInsert(StringBuilder sql, InsertQuery insert)
     {
+        if (insert.ValuesRows.Count > 0 == insert.FromSelect is not null)
+        {
+            throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
+        }
+
         WriteWithPrefix(sql, insert.With);
         sql.Append("INSERT INTO ");
         sql.Append(Table(insert.Into));
@@ -75,8 +80,16 @@ public sealed class SqlServerEmitter : ISqlEmitter
             sql.Append(string.Join(", ", insert.Returning.Select(i => OutputItem(i, "INSERTED"))));
         }
 
-        sql.Append(" VALUES ");
-        sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        if (insert.FromSelect is not null)
+        {
+            sql.Append(' ');
+            WriteSelect(sql, insert.FromSelect, includeWith: false);
+        }
+        else
+        {
+            sql.Append(" VALUES ");
+            sql.Append(string.Join(", ", insert.ValuesRows.Select(row => $"({string.Join(", ", row.Select(Expr))})")));
+        }
     }
 
     private static void WriteUpdate(StringBuilder sql, UpdateQuery update)

@@ -151,4 +151,77 @@ public sealed class WriteEmitterTests
             "WITH [stale] AS (SELECT [u].[id] FROM [dbo].[users] AS [u]) DELETE FROM [dbo].[users]",
             sql.Sql);
     }
+
+    private static SelectQuery StagingSelect(string? schema) => new(
+        Select: [new SelectItem(new ColumnRef("s", "email", typeof(string)), null)],
+        From: new FromSource("staging", schema, "s"),
+        Joins: [], Where: null, OrderBy: [], Limit: null, Offset: null,
+        Distinct: false, With: [], RecursiveWith: false, UnionAll: []);
+
+    [Fact]
+    public void Postgres_insert_from_select()
+    {
+        var q = new InsertQuery(
+            Into: new FromSource("users", "public", "u"),
+            Columns: ["email"],
+            ValuesRows: [],
+            FromSelect: StagingSelect("public"),
+            Returning: [],
+            With: [],
+            RecursiveWith: false);
+        var sql = new PgEmitter().Emit(q, new ParamBag());
+        Assert.Equal(
+            "INSERT INTO \"public\".\"users\" (\"email\") SELECT \"s\".\"email\" FROM \"public\".\"staging\" AS \"s\"",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_insert_from_select_with_output()
+    {
+        var q = new InsertQuery(
+            Into: new FromSource("users", "dbo", "u"),
+            Columns: ["email"],
+            ValuesRows: [],
+            FromSelect: StagingSelect("dbo"),
+            Returning: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
+            With: [],
+            RecursiveWith: false);
+        var sql = new SqlServerEmitter().Emit(q, new ParamBag());
+        Assert.Equal(
+            "INSERT INTO [dbo].[users] ([email]) OUTPUT INSERTED.[id] SELECT [s].[email] FROM [dbo].[staging] AS [s]",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void Insert_with_values_and_select_throws()
+    {
+        var bag = new ParamBag();
+        var v = bag.Add("x", typeof(string));
+        var q = new InsertQuery(
+            Into: new FromSource("users", "public", "u"),
+            Columns: ["email"],
+            ValuesRows: [[v]],
+            FromSelect: StagingSelect("public"),
+            Returning: [], With: [], RecursiveWith: false);
+        Assert.Throws<InvalidOperationException>(() => new PgEmitter().Emit(q, bag));
+    }
+
+    [Fact]
+    public void Ilike_inside_from_select_throws_on_sql_server()
+    {
+        var bag = new ParamBag();
+        var p = bag.Add("%x%", typeof(string));
+        var source = StagingSelect("dbo") with
+        {
+            Where = new BinaryExpr(BinaryOp.ILike, new ColumnRef("s", "email", typeof(string)), p)
+        };
+        var q = new InsertQuery(
+            Into: new FromSource("users", "dbo", "u"),
+            Columns: ["email"],
+            ValuesRows: [],
+            FromSelect: source,
+            Returning: [], With: [], RecursiveWith: false);
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => new SqlServerEmitter().Emit(q, bag));
+        Assert.Equal(Feature.ILike, ex.Feature);
+    }
 }
