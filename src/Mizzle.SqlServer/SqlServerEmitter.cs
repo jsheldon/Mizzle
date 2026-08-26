@@ -277,7 +277,8 @@ public sealed class SqlServerEmitter : ISqlEmitter
             BinaryOp.And => "AND",
             BinaryOp.Or => "OR",
             BinaryOp.Like => "LIKE",
-            BinaryOp.ILike => "ILIKE",
+            BinaryOp.ILike => throw new UnsupportedFeatureException(
+                Feature.ILike, DialectKind.SqlServer, FeatureSupport.WhoSupports(Feature.ILike)),
             _ => throw new NotSupportedException($"Unsupported operator {bin.Op}.")
         };
 

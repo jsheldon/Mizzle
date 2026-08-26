@@ -41,6 +41,11 @@ public static class FeatureCollector
             features.Add(Feature.RecursiveCte);
         }
 
+        foreach (var item in select.Select)
+        {
+            CollectExpr(item.Expr, features);
+        }
+
         if (select.Where is not null)
         {
             CollectExpr(select.Where, features);
@@ -49,6 +54,24 @@ public static class FeatureCollector
         foreach (var join in select.Joins)
         {
             CollectExpr(join.On, features);
+        }
+
+        if (select.GroupBy is not null)
+        {
+            foreach (var group in select.GroupBy)
+            {
+                CollectExpr(group, features);
+            }
+        }
+
+        if (select.Having is not null)
+        {
+            CollectExpr(select.Having, features);
+        }
+
+        foreach (var order in select.OrderBy)
+        {
+            CollectExpr(order.Expr, features);
         }
 
         foreach (var cte in select.With)
@@ -84,6 +107,11 @@ public static class FeatureCollector
                 break;
             case UpdateQuery update:
                 CollectWriteMeta(update.With, update.RecursiveWith, update.Returning, features);
+                foreach (var (_, value) in update.Set)
+                {
+                    CollectExpr(value, features);
+                }
+
                 if (update.Where is not null)
                 {
                     CollectExpr(update.Where, features);
@@ -120,6 +148,11 @@ public static class FeatureCollector
         if (returning.Count > 0)
         {
             features.Add(Feature.Returning);
+        }
+
+        foreach (var item in returning)
+        {
+            CollectExpr(item.Expr, features);
         }
 
         foreach (var cte in with)
