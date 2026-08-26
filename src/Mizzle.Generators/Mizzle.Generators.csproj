@@ -11,7 +11,7 @@
     <Description>Roslyn generators and analyzers for Mizzle schema records, ordinal mappers, Hybrid interceptors, and Strict mode.</Description>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <NoWarn>$(NoWarn);RSEXPERIMENTAL002</NoWarn>
+    <NoWarn>$(NoWarn);RSEXPERIMENTAL002;NU5128</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <None Include="build\Mizzle.Generators.props" Pack="true" PackagePath="build" />
+    <None Include="$(OutputPath)\$(AssemblyName).dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
     <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
     <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
   </ItemGroup>

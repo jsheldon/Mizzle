@@ -15,7 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.8" />
     <ProjectReference Include="..\Mizzle.Generators\Mizzle.Generators.csproj"
                       OutputItemType="Analyzer"
-                      ReferenceOutputAssembly="false" />
+                      PrivateAssets="none" />
   </ItemGroup>
 
   <Import Project="..\Mizzle.Generators\build\Mizzle.Generators.props" />
