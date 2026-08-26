@@ -6,11 +6,8 @@ public static class Sql
 {
     public static BinaryExpr Eq(Expr left, Expr right) => new(BinaryOp.Eq, left, right);
 
-    public static BinaryExpr Eq(ColumnRef column, ParamBag bag, object? value)
-        => new(BinaryOp.Eq, column, bag.Add(value, column.ClrType));
-
     public static BinaryExpr Eq(ColumnRef column, object? value, ParamBag bag)
-        => Eq(column, bag, value);
+        => new(BinaryOp.Eq, column, bag.Add(value, column.ClrType));
 
     public static BinaryExpr And(Expr left, Expr right) => new(BinaryOp.And, left, right);
 
