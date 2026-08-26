@@ -1,10 +1,13 @@
 using Mizzle.Ir;
+using Mizzle.Schema;
 
 namespace Mizzle.Fluent;
 
 public static class Sql
 {
     public static BinaryExpr Eq(Expr left, Expr right) => new(BinaryOp.Eq, left, right);
+
+    public static BinaryExpr Eq(IColumn left, IColumn right) => new(BinaryOp.Eq, left.ToRef(), right.ToRef());
 
     public static BinaryExpr Eq(ColumnRef column, object? value, ParamBag bag)
         => new(BinaryOp.Eq, column, bag.Add(value, column.ClrType));

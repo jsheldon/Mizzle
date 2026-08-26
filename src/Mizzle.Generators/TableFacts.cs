@@ -166,6 +166,31 @@ internal static class TableFacts
             _ => null
         };
 
+    // Names of the fluent modifiers chained after the factory call, e.g.
+    // Text("email").NotNull().Unique() -> ["Unique", "NotNull"].
+    public static IReadOnlyList<string> ModifierNames(IPropertySymbol member)
+    {
+        var names = new List<string>();
+        foreach (var syntaxRef in member.DeclaringSyntaxReferences)
+        {
+            if (syntaxRef.GetSyntax() is not PropertyDeclarationSyntax property
+                || property.Initializer?.Value is not InvocationExpressionSyntax invocation)
+            {
+                continue;
+            }
+
+            while (invocation.Expression is MemberAccessExpressionSyntax { Expression: InvocationExpressionSyntax inner } access)
+            {
+                names.Add(access.Name.Identifier.Text);
+                invocation = inner;
+            }
+
+            break;
+        }
+
+        return names;
+    }
+
     public static string? FactoryDbName(IPropertySymbol member)
     {
         var invocation = InnermostFactoryInvocation(member);

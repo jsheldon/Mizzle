@@ -60,11 +60,14 @@ public sealed class SchemaGenerator : IIncrementalGenerator
                 continue;
             }
 
+            var isIdentity = FactoryName(member) == "Identity";
+            var modifiers = TableFacts.ModifierNames(member);
             columns.Add(new ColumnModel(
                 member.Name,
                 ToCSharpType(clr),
                 ReaderMethod(clr),
-                FactoryName(member) == "Identity"));
+                isIdentity,
+                isIdentity || modifiers.Contains("NotNull") || modifiers.Contains("PrimaryKey")));
         }
 
         if (columns.Count == 0 && mismatches.Count == 0)
@@ -100,7 +103,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         sb.Append("    public sealed record ");
         sb.Append(table.Singular);
         sb.Append('(');
-        sb.Append(string.Join(", ", table.Columns.Select(c => c.ClrType + " " + c.Name)));
+        sb.Append(string.Join(", ", table.Columns.Select(c => MemberType(c) + " " + c.Name)));
         sb.AppendLine(");");
 
         var insertables = table.Columns.Where(c => !c.IsIdentity).ToList();
@@ -113,7 +116,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         else
         {
             sb.Append('(');
-            sb.Append(string.Join(", ", insertables.Select(c => c.ClrType + " " + c.Name)));
+            sb.Append(string.Join(", ", insertables.Select(c => MemberType(c) + " " + c.Name)));
             sb.AppendLine(");");
         }
 
@@ -125,7 +128,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         sb.Append(table.Singular);
         sb.AppendLine(" Read(global::System.Data.Common.DbDataReader r)");
         sb.Append("            => new(");
-        sb.Append(string.Join(", ", table.Columns.Select((c, i) => "r." + c.Reader + "(" + i + ")")));
+        sb.Append(string.Join(", ", table.Columns.Select(ReadCall)));
         sb.AppendLine(");");
         sb.AppendLine("    }");
         sb.AppendLine("}");
@@ -158,8 +161,17 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         SpecialType.System_Int16 => "GetInt16",
         SpecialType.System_Byte => "GetByte",
         SpecialType.System_Single => "GetFloat",
-        _ => "GetValue"
+        _ when type.ToDisplayString() == "System.Guid" => "GetGuid",
+        _ => $"GetFieldValue<{type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
     };
+
+    private static string MemberType(ColumnModel column)
+        => column.IsRequired ? column.ClrType : column.ClrType + "?";
+
+    private static string ReadCall(ColumnModel column, int ordinal)
+        => column.IsRequired
+            ? $"r.{column.Reader}({ordinal})"
+            : $"r.IsDBNull({ordinal}) ? ({column.ClrType}?)null : r.{column.Reader}({ordinal})";
 
     private static string Singular(string tableName)
     {
@@ -196,17 +208,19 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
     private sealed class ColumnModel
     {
-        public ColumnModel(string name, string clrType, string reader, bool isIdentity)
+        public ColumnModel(string name, string clrType, string reader, bool isIdentity, bool isRequired)
         {
             Name = name;
             ClrType = clrType;
             Reader = reader;
             IsIdentity = isIdentity;
+            IsRequired = isRequired;
         }
 
         public string Name { get; }
         public string ClrType { get; }
         public string Reader { get; }
         public bool IsIdentity { get; }
+        public bool IsRequired { get; }
     }
 }

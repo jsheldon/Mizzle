@@ -70,7 +70,8 @@ public sealed class SelectBuilder
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 
-    public SelectBuilder Where(Expr expr) => Copy(where: expr);
+    public SelectBuilder Where(Expr expr)
+        => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public SelectBuilder Where(IColumn column, object? value)
     {
@@ -83,8 +84,12 @@ public sealed class SelectBuilder
     public SelectBuilder InnerJoin(FromSource target, Expr on)
         => Copy(joins: [.._joins, new JoinClause(JoinKind.Inner, target, on)]);
 
+    public SelectBuilder InnerJoin(ITable target, Expr on) => InnerJoin(target.ToFrom(), on);
+
     public SelectBuilder LeftJoin(FromSource target, Expr on)
         => Copy(joins: [.._joins, new JoinClause(JoinKind.Left, target, on)]);
+
+    public SelectBuilder LeftJoin(ITable target, Expr on) => LeftJoin(target.ToFrom(), on);
 
     public SelectBuilder OrderBy(Expr expr)
         => Copy(orderBy: [.._orderBy, new OrderByItem(expr, false)]);
@@ -186,6 +191,27 @@ public sealed class SelectBuilder
         return rows.Count switch
         {
             0 => throw new InvalidOperationException("Sequence contains no elements."),
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element.")
+        };
+    }
+
+    public async Task<T?> FirstOrDefaultAsync<T>(
+        Func<DbDataReader, T> map,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync(map, cancellationToken);
+        return rows.Count == 0 ? default : rows[0];
+    }
+
+    public async Task<T?> SingleOrDefaultAsync<T>(
+        Func<DbDataReader, T> map,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync(map, cancellationToken);
+        return rows.Count switch
+        {
+            0 => default,
             1 => rows[0],
             _ => throw new InvalidOperationException("Sequence contains more than one element.")
         };
