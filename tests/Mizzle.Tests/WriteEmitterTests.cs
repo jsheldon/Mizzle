@@ -111,4 +111,44 @@ public sealed class WriteEmitterTests
             "DELETE FROM [dbo].[users] WHERE [u].[id] = @p0",
             sql.Sql);
     }
+
+    [Fact]
+    public void Postgres_delete_with_cte()
+    {
+        var cteBody = new SelectQuery(
+            Select: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
+            From: new FromSource("users", "public", "u"),
+            Joins: [], Where: null, OrderBy: [], Limit: null, Offset: null,
+            Distinct: false, With: [], RecursiveWith: false, UnionAll: []);
+        var q = new DeleteQuery(
+            From: new FromSource("users", "public", "u"),
+            Where: null,
+            Returning: [],
+            With: [new CteClause("stale", cteBody)],
+            RecursiveWith: false);
+        var sql = new PgEmitter().Emit(q, new ParamBag());
+        Assert.Equal(
+            "WITH \"stale\" AS (SELECT \"u\".\"id\" FROM \"public\".\"users\" AS \"u\") DELETE FROM \"public\".\"users\" AS \"u\"",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_delete_with_cte()
+    {
+        var cteBody = new SelectQuery(
+            Select: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
+            From: new FromSource("users", "dbo", "u"),
+            Joins: [], Where: null, OrderBy: [], Limit: null, Offset: null,
+            Distinct: false, With: [], RecursiveWith: false, UnionAll: []);
+        var q = new DeleteQuery(
+            From: new FromSource("users", "dbo", "u"),
+            Where: null,
+            Returning: [],
+            With: [new CteClause("stale", cteBody)],
+            RecursiveWith: false);
+        var sql = new SqlServerEmitter().Emit(q, new ParamBag());
+        Assert.Equal(
+            "WITH [stale] AS (SELECT [u].[id] FROM [dbo].[users] AS [u]) DELETE FROM [dbo].[users]",
+            sql.Sql);
+    }
 }
