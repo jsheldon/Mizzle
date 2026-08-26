@@ -3,5 +3,6 @@ obj/
 .vs/
 *.user
 *.suo
+*.DotSettings
 *.nupkg
 TestResults/

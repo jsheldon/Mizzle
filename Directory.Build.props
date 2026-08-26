@@ -5,9 +5,19 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Authors>Mizzle</Authors>
+    <Authors>Jeff Sheldon</Authors>
     <Version>0.1.0-alpha</Version>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <RepositoryUrl>https://github.com/placeholder/Mizzle</RepositoryUrl>
+    <RepositoryUrl>https://github.com/jsheldon/Mizzle</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/jsheldon/Mizzle</PackageProjectUrl>
+    <PackageTags>sql;orm;query-builder;postgresql;sqlserver;source-generator</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 </Project>
