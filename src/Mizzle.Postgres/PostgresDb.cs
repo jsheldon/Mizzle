@@ -97,7 +97,6 @@ public sealed class PostgresDb : IQueryExecutor
         QueryOptions? overlay,
         CancellationToken cancellationToken)
     {
-        EnsureCompiledQuery();
         var sql = Compile(query, bag);
         if (_ambient.Value is { } ambient)
         {
@@ -196,7 +195,7 @@ public sealed class PostgresDb : IQueryExecutor
 
     private void EnsureCompiledQuery()
     {
-        if (_options.AssertCompiledQueries && !InterceptorScope.Entered)
+        if (_options.AssertCompiledQueries)
         {
             throw new InvalidOperationException("Query was not interceptable");
         }

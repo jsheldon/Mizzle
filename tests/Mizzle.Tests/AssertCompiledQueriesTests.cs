@@ -21,4 +21,20 @@ public sealed class AssertCompiledQueriesTests
             db.Select(users.Email).From(users.ToFrom()).ToListAsync(r => r.GetString(0)));
         Assert.Equal("Query was not interceptable", ex.Message);
     }
+
+    [Fact]
+    public async Task Runtime_write_does_not_assert()
+    {
+        // Writes are not interceptable in phase 1 by design; the assert must not
+        // fire on them. The call still fails (no server) — but with a connection
+        // error, never the assert exception.
+        await using var dataSource = NpgsqlDataSource.Create(
+            "Host=localhost;Port=1;Username=x;Password=y;Database=z;Timeout=1");
+        var db = new PostgresDb(dataSource, new MizzleOptions { AssertCompiledQueries = true });
+        var users = new AssertUsers();
+        var ex = await Record.ExceptionAsync(
+            () => db.InsertInto(users).Value(users.Email, "x").ExecuteAsync());
+        Assert.NotNull(ex);
+        Assert.False(ex is InvalidOperationException { Message: "Query was not interceptable" });
+    }
 }
