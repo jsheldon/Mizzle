@@ -195,6 +195,11 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
             if (property.Initializer?.Value is InvocationExpressionSyntax invocation)
             {
+                while (invocation.Expression is MemberAccessExpressionSyntax { Expression: InvocationExpressionSyntax inner })
+                {
+                    invocation = inner;
+                }
+
                 return invocation.Expression switch
                 {
                     IdentifierNameSyntax id => id.Identifier.Text,
