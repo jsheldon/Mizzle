@@ -135,97 +135,16 @@ public sealed class SchemaGenerator : IIncrementalGenerator
     }
 
     private static bool IsDialectTable(INamedTypeSymbol symbol, out bool postgres)
-    {
-        for (var current = symbol.BaseType; current is not null; current = current.BaseType)
-        {
-            var def = current.OriginalDefinition;
-            var ns = def.ContainingNamespace.ToDisplayString();
-            if (def.Name == "PgTable" && ns == "Mizzle.Postgres")
-            {
-                postgres = true;
-                return true;
-            }
-
-            if (def.Name == "SqlTable" && ns == "Mizzle.SqlServer")
-            {
-                postgres = false;
-                return true;
-            }
-        }
-
-        postgres = false;
-        return false;
-    }
+        => TableFacts.IsDialectTable(symbol, out postgres);
 
     private static bool TryColumn(INamedTypeSymbol type, out ITypeSymbol clr, out bool isSqlColumn)
-    {
-        clr = type;
-        isSqlColumn = false;
-        if (type.TypeArguments.Length != 1)
-        {
-            return false;
-        }
-
-        var ns = type.ContainingNamespace.ToDisplayString();
-        if (type.Name == "PgColumn" && ns == "Mizzle.Postgres")
-        {
-            clr = type.TypeArguments[0];
-            isSqlColumn = false;
-            return true;
-        }
-
-        if (type.Name == "SqlColumn" && ns == "Mizzle.SqlServer")
-        {
-            clr = type.TypeArguments[0];
-            isSqlColumn = true;
-            return true;
-        }
-
-        return false;
-    }
+        => TableFacts.TryColumn(type, out clr, out isSqlColumn);
 
     private static string? FactoryName(IPropertySymbol member)
-    {
-        foreach (var syntaxRef in member.DeclaringSyntaxReferences)
-        {
-            if (syntaxRef.GetSyntax() is not PropertyDeclarationSyntax property)
-            {
-                continue;
-            }
+        => TableFacts.FactoryName(member);
 
-            if (property.Initializer?.Value is InvocationExpressionSyntax invocation)
-            {
-                while (invocation.Expression is MemberAccessExpressionSyntax { Expression: InvocationExpressionSyntax inner })
-                {
-                    invocation = inner;
-                }
-
-                return invocation.Expression switch
-                {
-                    IdentifierNameSyntax id => id.Identifier.Text,
-                    MemberAccessExpressionSyntax access => access.Name.Identifier.Text,
-                    _ => null
-                };
-            }
-        }
-
-        return null;
-    }
-
-    private static string ToCSharpType(ITypeSymbol type) => type.SpecialType switch
-    {
-        SpecialType.System_Int32 => "int",
-        SpecialType.System_String => "string",
-        SpecialType.System_Int64 => "long",
-        SpecialType.System_Boolean => "bool",
-        SpecialType.System_DateTime => "System.DateTime",
-        SpecialType.System_Double => "double",
-        SpecialType.System_Decimal => "decimal",
-        SpecialType.System_Int16 => "short",
-        SpecialType.System_Byte => "byte",
-        SpecialType.System_Single => "float",
-        _ => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-    };
+    private static string ToCSharpType(ITypeSymbol type)
+        => TableFacts.ToCSharpType(type);
 
     private static string ReaderMethod(ITypeSymbol type) => type.SpecialType switch
     {
