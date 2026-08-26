@@ -24,11 +24,11 @@ public static class Sql
 
     public static BinaryExpr Like(Expr left, Expr right) => new(BinaryOp.Like, left, right);
 
-    public static InExpr In(Expr needle, IReadOnlyList<Expr> haystack) => new(needle, haystack);
+    public static InExpr In(Expr needle, IReadOnlyList<Expr> haystack) => new(needle, [..haystack]);
 
     public static BetweenExpr Between(Expr value, Expr lo, Expr hi) => new(value, lo, hi);
 
-    public static CoalesceExpr Coalesce(params Expr[] args) => new(args);
+    public static CoalesceExpr Coalesce(params Expr[] args) => new([..args]);
 
     public static AggregateExpr Count() => new(AggregateKind.Count, null);
 

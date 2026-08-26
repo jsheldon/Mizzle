@@ -7,7 +7,7 @@ public sealed class UpdateBuilder
 {
     private readonly ITable _table;
     private readonly IQueryExecutor? _executor;
-    private readonly IReadOnlyList<(string Column, Expr Value)> _set;
+    private readonly EquatableList<(string Column, Expr Value)> _set;
     private readonly Expr? _where;
     private readonly int? _expect;
 
@@ -21,7 +21,7 @@ public sealed class UpdateBuilder
         ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
-        IReadOnlyList<(string Column, Expr Value)> set,
+        EquatableList<(string Column, Expr Value)> set,
         Expr? where,
         int? expect)
     {
@@ -121,7 +121,7 @@ public sealed class UpdateBuilder
     }
 
     private UpdateBuilder Copy(
-        IReadOnlyList<(string Column, Expr Value)>? set = null,
+        EquatableList<(string Column, Expr Value)>? set = null,
         Expr? where = null,
         int? expect = null,
         QueryOptions? overlay = null)
