@@ -60,4 +60,43 @@ public sealed class SchemaTests
         Assert.Equal("draft", posts.Status.DefaultValue);
         Assert.Same(Posts.Referenced.Id, posts.UserId.ReferencedColumn);
     }
+
+    [Fact]
+    public void Factories_carry_clr_types_and_length()
+    {
+        var t = new WideTable();
+        Assert.Equal(typeof(DateTimeOffset), t.CreatedAt.ClrType);
+        Assert.Equal(typeof(Guid), t.Key.ClrType);
+        Assert.Equal(50, t.Code.Length);
+        Assert.Equal(typeof(bool), t.Active.ClrType);
+        Assert.Equal(typeof(long), t.Big.ClrType);
+        var s = new WideSqlTable();
+        Assert.Equal(255, s.Email.Length);
+        Assert.Null(s.Notes.Length);
+        Assert.Equal(typeof(DateTime), s.CreatedAt.ClrType);
+        Assert.Equal(typeof(bool), s.Active.ClrType);
+        Assert.Equal(typeof(long), s.Big.ClrType);
+        Assert.Equal(typeof(Guid), s.Key.ClrType);
+    }
+}
+
+file sealed class WideTable : PgTable<WideTable>
+{
+    public WideTable() : base("wide", "public", "w") { }
+    public PgColumn<DateTimeOffset> CreatedAt { get; } = Timestamptz("created_at");
+    public PgColumn<Guid> Key { get; } = Uuid("key");
+    public PgColumn<string> Code { get; } = Varchar("code", 50);
+    public PgColumn<bool> Active { get; } = Boolean("active");
+    public PgColumn<long> Big { get; } = BigInt("big");
+}
+
+file sealed class WideSqlTable : SqlTable<WideSqlTable>
+{
+    public WideSqlTable() : base("wide", "dbo", "w") { }
+    public SqlColumn<string> Email { get; } = NVarChar("email", 255);
+    public SqlColumn<string> Notes { get; } = NVarCharMax("notes");
+    public SqlColumn<DateTime> CreatedAt { get; } = DateTime2("created_at");
+    public SqlColumn<bool> Active { get; } = Bit("active");
+    public SqlColumn<long> Big { get; } = BigInt("big");
+    public SqlColumn<Guid> Key { get; } = UniqueIdentifier("key");
 }
