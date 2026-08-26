@@ -12,6 +12,7 @@ public abstract class Table<TSelf> : ITable
         Schema = schema;
         Alias = alias ?? name;
         BindColumns();
+        Constraints = [..DefineConstraints()];
     }
 
     public string Name { get; }
@@ -21,7 +22,11 @@ public abstract class Table<TSelf> : ITable
 
     public IReadOnlyList<IColumn> Columns { get; private set; } = [];
 
+    public IReadOnlyList<TableConstraint> Constraints { get; }
+
     public FromSource ToFrom() => new(Name, Schema, Alias);
+
+    protected virtual IEnumerable<TableConstraint> DefineConstraints() => [];
 
     private void BindColumns()
     {

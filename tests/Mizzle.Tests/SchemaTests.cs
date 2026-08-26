@@ -1,3 +1,5 @@
+using Mizzle.Schema;
+
 namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
@@ -78,6 +80,23 @@ public sealed class SchemaTests
         Assert.Equal(typeof(long), s.Big.ClrType);
         Assert.Equal(typeof(Guid), s.Key.ClrType);
     }
+
+    [Fact]
+    public void Constraints_hook_exposes_composite_keys()
+    {
+        var t = new LinkTable();
+        var pk = Assert.IsType<CompositePrimaryKey>(Assert.Single(t.Constraints));
+        Assert.Equal(2, pk.Columns.Count);
+    }
+}
+
+file sealed class LinkTable : PgTable<LinkTable>
+{
+    public LinkTable() : base("links", "public", "l") { }
+    public PgColumn<int> UserId { get; } = Integer("user_id");
+    public PgColumn<int> RoleId { get; } = Integer("role_id");
+    protected override IEnumerable<TableConstraint> DefineConstraints()
+        => [new CompositePrimaryKey([UserId, RoleId])];
 }
 
 file sealed class WideTable : PgTable<WideTable>
