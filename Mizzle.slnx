@@ -6,4 +6,5 @@
   <Project Path="tests/Mizzle.Tests/Mizzle.Tests.csproj" />
   <Project Path="tests/Mizzle.Integration.Tests/Mizzle.Integration.Tests.csproj" />
   <Project Path="tests/Mizzle.Generators.Tests/Mizzle.Generators.Tests.csproj" />
+  <Project Path="benchmarks/Mizzle.Benchmarks/Mizzle.Benchmarks.csproj" />
 </Solution>
