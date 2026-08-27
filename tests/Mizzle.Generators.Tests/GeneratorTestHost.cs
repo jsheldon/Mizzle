@@ -11,23 +11,39 @@ namespace Mizzle.Generators.Tests;
 
 internal static class GeneratorTestHost
 {
-    public static GeneratorDriverRunResult Run(string source)
+    public static GeneratorDriverRunResult Run(params string[] sources)
     {
         var parseOptions = ParseOptions();
-        var compilation = CreateCompilation(source, parseOptions);
+        var compilation = CreateCompilation(sources, parseOptions);
         var driver = CSharpGeneratorDriver.Create(
             [
                 new SchemaGenerator().AsSourceGenerator(),
-                new QueryInterceptorGenerator().AsSourceGenerator()
+                new QueryInterceptorGenerator().AsSourceGenerator(),
+                new ProjectionGenerator().AsSourceGenerator()
             ],
             parseOptions: parseOptions);
         return driver.RunGenerators(compilation).GetRunResult();
     }
 
+    public static (GeneratorDriverRunResult Result, ImmutableArray<Diagnostic> CompileDiagnostics) RunAndCompile(params string[] sources)
+    {
+        var parseOptions = ParseOptions();
+        var compilation = CreateCompilation(sources, parseOptions);
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [
+                new SchemaGenerator().AsSourceGenerator(),
+                new QueryInterceptorGenerator().AsSourceGenerator(),
+                new ProjectionGenerator().AsSourceGenerator()
+            ],
+            parseOptions: parseOptions);
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+        return (driver.GetRunResult(), output.GetDiagnostics());
+    }
+
     public static ImmutableArray<Diagnostic> Analyze(string source, string? queryMode)
     {
         var parseOptions = ParseOptions();
-        var compilation = CreateCompilation(source, parseOptions);
+        var compilation = CreateCompilation([source], parseOptions);
         var analyzers = ImmutableArray.Create<DiagnosticAnalyzer>(new StrictAnalyzer());
         var options = new AnalyzerOptions(ImmutableArray<AdditionalText>.Empty, new TestAnalyzerConfigOptionsProvider(queryMode));
         return compilation.WithAnalyzers(analyzers, options).GetAnalyzerDiagnosticsAsync().GetAwaiter().GetResult();
@@ -37,16 +53,16 @@ internal static class GeneratorTestHost
         => string.Join("\n", result.Results.SelectMany(r => r.GeneratedSources).Select(s => s.SourceText.ToString()));
 
     public static CSharpCompilation Compile(string source)
-        => CreateCompilation(source, ParseOptions());
+        => CreateCompilation([source], ParseOptions());
 
     private static CSharpParseOptions ParseOptions()
         => new CSharpParseOptions(LanguageVersion.Latest)
             .WithFeatures([new KeyValuePair<string, string>("InterceptorsNamespaces", "Mizzle.Generated.Interceptors")]);
 
-    private static CSharpCompilation CreateCompilation(string source, CSharpParseOptions parseOptions)
+    private static CSharpCompilation CreateCompilation(string[] sources, CSharpParseOptions parseOptions)
         => CSharpCompilation.Create(
             "GeneratorTests",
-            [CSharpSyntaxTree.ParseText(source, parseOptions)],
+            [..sources.Select(source => CSharpSyntaxTree.ParseText(source, parseOptions))],
             References(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 

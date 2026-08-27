@@ -233,6 +233,27 @@ public sealed class SelectBuilder
         CancellationToken cancellationToken = default)
         => Executor().StreamAsync(Build(), map, Overlay, cancellationToken);
 
+    // Delegate-free typed terminators. These runtime bodies are placeholders:
+    // the source generator intercepts statically-visible call sites and routes
+    // them through the precompiled path with a generated projection mapper.
+    public Task<IReadOnlyList<T>> ToListAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    public Task<T> FirstAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    public Task<T?> FirstOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    public Task<T> SingleAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    public Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    private static InvalidOperationException NotStaticallyVisible()
+        => new("Query shape is not statically visible. Use the delegate overload or restructure the chain.");
+
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
     public Task<IReadOnlyList<T>> ToListPrecompiledAsync<T>(
         string sql,

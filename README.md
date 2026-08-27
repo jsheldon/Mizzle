@@ -44,11 +44,20 @@ services.AddMizzlePostgres(connectionString);
 ```csharp
 var users = new Users();
 
-// The generator emits a `User` record and an ordinal mapper for every table.
+// Name a result type that doesn't exist yet and the generator declares it
+// from the select shape — columns, CLR types, and nullability included.
 var found = await db.Select(users.Id, users.Email)
-    .From(users.ToFrom())
-    .Where(users.Email, "a@b.com")
-    .ToListAsync(UsersMapper.Read);
+    .From(users)
+    .Where(users.Email.Eq("a@b.com"))
+    .ToListAsync<UserRow>();
+
+// Or name a type you already own and the generator maps into it by
+// normalized member name (first_name matches FirstName), failing the
+// build if a column has no home or a required member goes unfilled.
+var profile = await db.Select(users.Id, users.Email)
+    .From(users)
+    .Where(users.Id.Eq(42))
+    .FirstOrDefaultAsync<MyExistingDto>();
 
 var id = await db.InsertInto(users)
     .Value(users.Email, "new@example.com")
@@ -61,6 +70,18 @@ await db.Transaction(async tx =>
     // queries in here run on the transaction's connection;
     // nested Transaction calls become savepoints
 });
+```
+
+Joins read like SQL, conditions are typed, and chained `Where` calls AND together:
+
+```csharp
+var rows = await db.Select(a.FirstName, c.ItemDesc)
+    .From(a)
+    .LeftJoin(c).On(a.LanguageId.Eq(c.ItemId), c.ListType.Eq("language"))
+    .Where(a.PersonId.Eq(patientId))
+    .Where(a.PracticeId.Eq(tenant.PracticeId))
+    .OrderBy(a.FirstName)
+    .ToListAsync<ProfileRow>();
 ```
 
 Guarded updates for optimistic concurrency:
@@ -103,6 +124,16 @@ non-compilable query into a build error.
   guarantee, not a gap — but check that the surface covers your needs before
   adopting.
 - No LINQ / `IQueryable`, no sync APIs, no migrations, no MySQL (yet).
+
+## Breaking changes in 0.1.0-alpha.3
+
+- `ParamBag` is gone. Expressions carry their values (`col.Eq(value)`); a
+  deterministic parameterization pass extracts them at compile time. Every
+  bag-taking overload and the builders' `Parameters` property were removed.
+- `IQueryExecutor` signatures changed (no bag parameter; the precompiled
+  entry point takes the built query). Custom executors must be updated.
+- The schema metadata property `IColumn.IsNotNull` is now `IsRequired`
+  (freeing `IsNotNull()` for the SQL operator).
 
 ## Building
 
