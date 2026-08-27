@@ -27,6 +27,11 @@ internal enum MapStatus
     None,
     Valid,
     Invalid,
+
+    // Map<TResult> produced a Nullable<T> column type. Column T is the storage
+    // type; nullability belongs to IsRequired, so the two would collide and the
+    // generators would emit "Guid??".
+    NullableResult,
 }
 
 internal sealed class TableColumnFact
@@ -99,7 +104,7 @@ internal static class TableFacts
                 || modifiers.Contains("NotNull")
                 || modifiers.Contains("PrimaryKey");
             var mapStatus = GetMapInfo(member, compilation, out var converterFq, out var storageReader, out _);
-            if (mapStatus == MapStatus.Invalid)
+            if (mapStatus is MapStatus.Invalid or MapStatus.NullableResult)
             {
                 return null;
             }
@@ -239,6 +244,13 @@ internal static class TableFacts
         }
 
         mapLocation = mapCall.GetLocation();
+        if (member.Type is INamedTypeSymbol columnType
+            && TryColumn(columnType, out var resultType, out _)
+            && IsNullableResult(resultType))
+        {
+            return MapStatus.NullableResult;
+        }
+
         storageReader = FactoryName(member) switch
         {
             "Text" or "NVarChar" or "NVarCharMax" or "Char" or "VarChar" or "Varchar" => "GetString",
@@ -269,6 +281,47 @@ internal static class TableFacts
 
         converterFq = method.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + "." + method.Name;
         return MapStatus.Valid;
+    }
+
+    // A column's type argument is the storage type, so any nullability on it
+    // collides with IsRequired. Nullable<T> would emit "Guid??"; an annotated
+    // reference type is erased by the display format and merely misleading.
+    public static bool IsNullableResult(ITypeSymbol type)
+        => type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+            || type.NullableAnnotation == NullableAnnotation.Annotated;
+
+    // The type MIZ009 tells the user to map to instead.
+    public static ITypeSymbol NonNullableResult(ITypeSymbol type)
+        => type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+            ? ((INamedTypeSymbol)type).TypeArguments[0]
+            : type.WithNullableAnnotation(NullableAnnotation.NotAnnotated);
+
+    // True when a column on this table already reported MIZ008/MIZ009. The
+    // projection generator suppresses MIZ007 in that case: the column
+    // diagnostic is the actionable one and points at the real line.
+    public static bool HasReportedColumnError(INamedTypeSymbol symbol, Compilation compilation)
+    {
+        if (symbol.IsAbstract || !IsDialectTable(symbol, out _))
+        {
+            return false;
+        }
+
+        foreach (var member in symbol.GetMembers().OfType<IPropertySymbol>())
+        {
+            if (member.IsStatic
+                || member.Type is not INamedTypeSymbol type
+                || !TryColumn(type, out _, out _))
+            {
+                continue;
+            }
+
+            if (GetMapInfo(member, compilation, out _, out _, out _) is MapStatus.Invalid or MapStatus.NullableResult)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // Names of the fluent modifiers chained after the factory call, e.g.

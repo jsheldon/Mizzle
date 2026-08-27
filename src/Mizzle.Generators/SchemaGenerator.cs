@@ -24,6 +24,21 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    internal static readonly DiagnosticDescriptor NullableConverterResult = new(
+        "MIZ009",
+        "Column converter result is nullable",
+        "Column '{0}': Map result type '{1}' is nullable. A column's type argument is the storage type, "
+            + "so express nullability by omitting NotNull() and map to '{2}' instead.",
+        "Mizzle",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
+    private static readonly Dictionary<string, DiagnosticDescriptor> ColumnDescriptors = new()
+    {
+        ["MIZ008"] = InvalidConverter,
+        ["MIZ009"] = NullableConverterResult,
+    };
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var tables = context.SyntaxProvider
@@ -50,7 +65,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
         var columns = new List<ColumnModel>();
         var mismatches = new List<string>();
-        var converterErrors = new List<(string Name, Location Location)>();
+        var converterErrors = new List<(string Id, Location Location, string[] Args)>();
         foreach (var member in symbol.GetMembers().OfType<IPropertySymbol>())
         {
             if (member.IsStatic || member.Type is not INamedTypeSymbol type)
@@ -74,9 +89,20 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             var isRequired = isIdentity || modifiers.Contains("NotNull") || modifiers.Contains("PrimaryKey");
             var mapStatus = TableFacts.GetMapInfo(
                 member, context.SemanticModel.Compilation, out var converterFq, out var storageReader, out var mapLocation);
+            var location = mapLocation ?? member.Locations.FirstOrDefault() ?? Location.None;
             if (mapStatus == MapStatus.Invalid)
             {
-                converterErrors.Add((member.Name, mapLocation ?? member.Locations.FirstOrDefault() ?? Location.None));
+                converterErrors.Add(("MIZ008", location, [member.Name]));
+                continue;
+            }
+
+            if (mapStatus == MapStatus.NullableResult)
+            {
+                converterErrors.Add(("MIZ009", location, [
+                    member.Name,
+                    clr.ToDisplayString(),
+                    TableFacts.NonNullableResult(clr).ToDisplayString()
+                ]));
                 continue;
             }
 
@@ -99,9 +125,9 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
     private static void Generate(SourceProductionContext context, TableModel table)
     {
-        foreach (var (name, location) in table.ConverterErrors)
+        foreach (var (id, location, args) in table.ConverterErrors)
         {
-            context.ReportDiagnostic(Diagnostic.Create(InvalidConverter, location, name));
+            context.ReportDiagnostic(Diagnostic.Create(ColumnDescriptors[id], location, [..args.Cast<object?>()]));
         }
 
         foreach (var name in table.Mismatches)
@@ -202,7 +228,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             string singular,
             List<ColumnModel> columns,
             List<string> mismatches,
-            List<(string Name, Location Location)> converterErrors)
+            List<(string Id, Location Location, string[] Args)> converterErrors)
         {
             Namespace = ns;
             TableName = tableName;
@@ -217,7 +243,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         public string Singular { get; }
         public List<ColumnModel> Columns { get; }
         public List<string> Mismatches { get; }
-        public List<(string Name, Location Location)> ConverterErrors { get; }
+        public List<(string Id, Location Location, string[] Args)> ConverterErrors { get; }
     }
 
     private sealed class ColumnModel

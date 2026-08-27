@@ -173,6 +173,87 @@ public sealed class SchemaGeneratorTests
     }
 
     [Fact]
+    public void Nullable_converter_result_reports_MIZ009()
+    {
+        const string source = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public static class NullableConvert
+            {
+                public static System.Guid? ToGuid(string value) => System.Guid.Parse(value);
+                public static string FromGuid(System.Guid? value) => value?.ToString() ?? "";
+            }
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<System.Guid?> PersonId { get; } = Char("person_id", 36).Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(source);
+        var diagnostic = Assert.Single(result.Diagnostics, d => d.Id == "MIZ009");
+        var message = diagnostic.GetMessage();
+        Assert.Contains("PersonId", message, StringComparison.Ordinal);
+        Assert.Contains("System.Guid?", message, StringComparison.Ordinal);
+        Assert.Contains("System.Guid'", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Nullable_converter_result_emits_no_double_nullable()
+    {
+        const string source = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public static class NullableConvert
+            {
+                public static System.Guid? ToGuid(string value) => System.Guid.Parse(value);
+                public static string FromGuid(System.Guid? value) => value?.ToString() ?? "";
+            }
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<System.Guid?> PersonId { get; } = Char("person_id", 36).Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(source));
+        Assert.DoesNotContain("??", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Nullable_reference_converter_result_reports_MIZ009()
+    {
+        const string source = """
+            #nullable enable
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public static class NullableConvert
+            {
+                public static string? ToLabel(string value) => value;
+                public static string FromLabel(string? value) => value ?? "";
+            }
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<string?> Label { get; } = Char("label", 36).Map(NullableConvert.ToLabel, NullableConvert.FromLabel);
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(source);
+        var diagnostic = Assert.Single(result.Diagnostics, d => d.Id == "MIZ009");
+        Assert.Contains("Label", diagnostic.GetMessage(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Reports_MIZ001_when_pg_table_has_sql_column()
     {
         const string source = """

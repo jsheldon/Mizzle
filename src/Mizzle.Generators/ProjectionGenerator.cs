@@ -125,13 +125,15 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             .OfType<BaseNamespaceDeclarationSyntax>()
             .FirstOrDefault()?.Name.ToString() ?? "";
 
-        var spec = BakedChainWalker.TryGetSpec(invocation, model);
+        var spec = BakedChainWalker.TryGetSpec(invocation, model, out var hasReportedColumnError);
         var sql = spec is null ? null : BakedSqlEmitter.Emit(spec);
         if (spec is null || sql is null)
         {
             // Only unbound T deserves MIZ007 — a bound T on a dynamic chain
             // simply falls back to the runtime stub (and MIZ002 under Strict).
-            return bound is null
+            // A table whose column already reported MIZ008/MIZ009 is silent
+            // either way: that diagnostic points at the real line.
+            return bound is null && !hasReportedColumnError
                 ? new ProjectionSite(typeName, ns, terminator, null, null, null, null, [("MIZ007", [typeName])], invocation.GetLocation())
                 : null;
         }

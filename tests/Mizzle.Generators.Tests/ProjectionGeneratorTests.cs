@@ -293,4 +293,47 @@ public sealed class ProjectionGeneratorTests
         var result = GeneratorTestHost.Run(Tables, site);
         Assert.Contains(result.Diagnostics, d => d.Id == "MIZ007");
     }
+
+    [Fact]
+    public void Column_error_suppresses_follow_on_MIZ007()
+    {
+        const string tables = """
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public static class NullableConvert
+            {
+                public static System.Guid? ToGuid(string value) => System.Guid.Parse(value);
+                public static string FromGuid(System.Guid? value) => value?.ToString() ?? "";
+            }
+
+            public sealed class Widgets : PgTable<Widgets>
+            {
+                public Widgets() : base("widgets", "public", "w") { }
+                public PgColumn<System.Guid?> WidgetId { get; } = Text("widget_id").Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
+            }
+            """;
+        const string callSite = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public static class Q
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var w = new Widgets();
+                    var rows = await db.Select(w.WidgetId).From(w).ToListAsync<WidgetRow>();
+                }
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(tables, callSite);
+        // MIZ009 points at the real line; MIZ007 would only add noise.
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ009");
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MIZ007");
+    }
 }

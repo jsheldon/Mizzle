@@ -18,7 +18,17 @@ namespace Mizzle.Generators;
 internal static class BakedChainWalker
 {
     public static BakedQuerySpec? TryGetSpec(InvocationExpressionSyntax terminator, SemanticModel model)
+        => TryGetSpec(terminator, model, out _);
+
+    // hasReportedColumnError: a referenced table failed to resolve because one
+    // of its columns already reported MIZ008/MIZ009. Callers use it to stay
+    // quiet rather than pile a misleading MIZ007 on top of the real error.
+    public static BakedQuerySpec? TryGetSpec(
+        InvocationExpressionSyntax terminator,
+        SemanticModel model,
+        out bool hasReportedColumnError)
     {
+        hasReportedColumnError = false;
         if (terminator.Expression is not MemberAccessExpressionSyntax terminatorMember)
         {
             return null;
@@ -51,6 +61,8 @@ internal static class BakedChainWalker
 
         calls.Reverse();
         var state = new WalkState(model);
+        try
+        {
         for (var i = 0; i < calls.Count; i++)
         {
             var (name, invocation) = calls[i];
@@ -197,6 +209,11 @@ internal static class BakedChainWalker
             state.OrderBy,
             state.Limit,
             state.Offset);
+        }
+        finally
+        {
+            hasReportedColumnError = state.HasReportedColumnError;
+        }
     }
 
     private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
@@ -228,6 +245,7 @@ internal static class BakedChainWalker
         public WalkState(SemanticModel model) => _model = model;
 
         public Dictionary<ISymbol, TableFactsModel> Tables { get; } = new(SymbolEqualityComparer.Default);
+        public bool HasReportedColumnError { get; private set; }
         public TableFactsModel? From { get; set; }
         public List<BakedJoin> Joins { get; } = [];
         public List<BakedColumn> Select { get; } = [];
@@ -238,26 +256,9 @@ internal static class BakedChainWalker
         public bool Distinct { get; set; }
 
         public TableFactsModel? ResolveTable(ExpressionSyntax expression)
-        {
-            if (_model.GetTypeInfo(expression).Type is not INamedTypeSymbol type)
-            {
-                return null;
-            }
-
-            if (Tables.TryGetValue(type, out var known))
-            {
-                return known;
-            }
-
-            var facts = TableFacts.FromSymbol(type, _model.Compilation);
-            if (facts is null)
-            {
-                return null;
-            }
-
-            Tables[type] = facts;
-            return facts;
-        }
+            => _model.GetTypeInfo(expression).Type is INamedTypeSymbol type
+                ? ResolveTableBySymbol(type)
+                : null;
 
         // t.Col -> (table facts, column fact) as a BakedColumn.
         public BakedColumn? ResolveColumn(ExpressionSyntax expression)
@@ -344,6 +345,11 @@ internal static class BakedChainWalker
             var facts = TableFacts.FromSymbol(type, _model.Compilation);
             if (facts is null)
             {
+                if (TableFacts.HasReportedColumnError(type, _model.Compilation))
+                {
+                    HasReportedColumnError = true;
+                }
+
                 return null;
             }
 

@@ -7,4 +7,3 @@ obj/
 *.nupkg
 TestResults/
 BenchmarkDotNet.Artifacts/
-benchmarks/
