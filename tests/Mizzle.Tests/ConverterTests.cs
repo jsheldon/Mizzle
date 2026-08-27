@@ -13,7 +13,7 @@ file static class EhrConvert
 
 file sealed class LegacyPersons : SqlTable<LegacyPersons>
 {
-    public LegacyPersons() : base("person", "dbo", "a") { }
+    public LegacyPersons() : base("person", "dbo") { }
 
     public SqlColumn<Guid> PersonId { get; } = Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
     public SqlColumn<DateOnly> DateOfBirth { get; } = Char("date_of_birth", 8).NotNull().Map(EhrConvert.ToDate, EhrConvert.FromDate);
@@ -54,7 +54,7 @@ public sealed class ConverterTests
         // Modifier before Map (copied through)
         Assert.True(t.DateOfBirth.IsRequired);
         Assert.Equal("date_of_birth", t.DateOfBirth.Name);
-        Assert.Equal("a", t.PersonId.ToRef().TableAlias);
+        Assert.Equal("person", t.PersonId.ToRef().TableAlias);
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public sealed class ConverterTests
             .OrderBy(t.FirstName)
             .Build();
         var (sql, values) = EmitSqlServer(q);
-        Assert.Contains("[a].[person_id] = @p0", sql, StringComparison.Ordinal);
+        Assert.Contains("[person].[person_id] = @p0", sql, StringComparison.Ordinal);
         Assert.Equal([id.ToString("D"), "20000122"], values);
     }
 

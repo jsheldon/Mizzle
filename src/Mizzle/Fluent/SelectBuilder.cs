@@ -251,6 +251,14 @@ public sealed class SelectBuilder
     public Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 
+    public Task<Page<T>> ToPageAsync<T>(
+        bool includeTotal = false,
+        CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
+    public Task<Page<T>> ToCursorPageAsync<T>(CancellationToken cancellationToken = default)
+        => throw NotStaticallyVisible();
+
     private static InvalidOperationException NotStaticallyVisible()
         => new("Query shape is not statically visible. Use the delegate overload or restructure the chain.");
 

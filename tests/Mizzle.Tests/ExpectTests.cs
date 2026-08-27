@@ -2,7 +2,7 @@ namespace Mizzle.Tests;
 
 file sealed class VersionedUsers : PgTable<VersionedUsers>
 {
-    public VersionedUsers() : base("users", "public", "u") { }
+    public VersionedUsers() : base("users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id");
     public PgColumn<string> Email { get; } = Text("email");

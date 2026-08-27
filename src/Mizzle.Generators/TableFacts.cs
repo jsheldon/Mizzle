@@ -74,7 +74,7 @@ internal static class TableFacts
             return null;
         }
 
-        if (!TryCtorLiterals(symbol, out var tableName, out var schema, out var alias))
+        if (!TryCtorLiterals(symbol, out var tableName, out var schema))
         {
             return null;
         }
@@ -124,7 +124,7 @@ internal static class TableFacts
             return null;
         }
 
-        return new TableFactsModel(tableName, schema, alias ?? tableName, postgres, columns);
+        return new TableFactsModel(tableName, schema, tableName, postgres, columns);
     }
 
     public static bool IsDialectTable(INamedTypeSymbol symbol, out bool postgres)
@@ -418,11 +418,10 @@ internal static class TableFacts
         _ => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
     };
 
-    private static bool TryCtorLiterals(INamedTypeSymbol symbol, out string tableName, out string? schema, out string? alias)
+    private static bool TryCtorLiterals(INamedTypeSymbol symbol, out string tableName, out string? schema)
     {
         tableName = "";
         schema = null;
-        alias = null;
         foreach (var ctor in symbol.Constructors)
         {
             foreach (var syntaxRef in ctor.DeclaringSyntaxReferences)
@@ -435,15 +434,12 @@ internal static class TableFacts
 
                 _ = declaration;
                 var args = initializer.ArgumentList.Arguments;
-                if (args.Count is < 1 or > 3)
+                if (args.Count is < 1 or > 2)
                 {
                     return false;
                 }
 
-                // base(name, schema, alias) -- but honor named arguments, since
-                // base("person", alias: "a") is the natural way to skip schema.
-                // Reading positionally would take "a" as the schema and emit
-                // FROM [a].[person] AS [person].
+                // base(name, schema), honoring named arguments.
                 for (var i = 0; i < args.Count; i++)
                 {
                     if (args[i].Expression is not LiteralExpressionSyntax literal
@@ -454,7 +450,7 @@ internal static class TableFacts
 
                     var value = literal.Token.ValueText;
                     var parameter = args[i].NameColon?.Name.Identifier.Text
-                        ?? i switch { 0 => "name", 1 => "schema", _ => "alias" };
+                        ?? i switch { 0 => "name", _ => "schema" };
                     switch (parameter)
                     {
                         case "name":
@@ -462,9 +458,6 @@ internal static class TableFacts
                             break;
                         case "schema":
                             schema = value;
-                            break;
-                        case "alias":
-                            alias = value;
                             break;
                         default:
                             return false;

@@ -5,8 +5,8 @@ namespace Mizzle.SqlServer;
 public abstract class SqlTable<TSelf> : Table<TSelf>
     where TSelf : SqlTable<TSelf>
 {
-    protected SqlTable(string name, string? schema = null, string? alias = null)
-        : base(name, schema, alias)
+    protected SqlTable(string name, string? schema = null)
+        : base(name, schema)
     {
     }
 

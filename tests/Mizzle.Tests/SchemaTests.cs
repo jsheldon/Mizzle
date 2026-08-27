@@ -4,21 +4,21 @@ namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<string> Email { get; } = Text("email").NotNull().Unique();
 }
 
 file sealed class SqlUsers : SqlTable<SqlUsers>
 {
-    public SqlUsers() : base("users", "dbo", "u") { }
+    public SqlUsers() : base("users", "dbo") { }
     public SqlColumn<string> Email { get; } = NVarChar("email", 255);
 }
 
 file sealed class Posts : PgTable<Posts>
 {
     private static readonly Users UsersRef = new();
-    public Posts() : base("posts", "public", "p") { }
+    public Posts() : base("posts", "public") { }
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<int> UserId { get; } = Integer("user_id").References(UsersRef.Id);
     public PgColumn<string> Status { get; } = Text("status").NotNull().Default("draft");
@@ -41,7 +41,7 @@ public sealed class SchemaTests
         var users = new Users();
         Assert.Equal("email", users.Email.Name);
         Assert.Equal(DialectKind.Postgres, users.Email.Dialect);
-        Assert.Equal(new ColumnRef("u", "email", typeof(string)), users.Email.ToRef());
+        Assert.Equal(new ColumnRef("users", "email", typeof(string)), users.Email.ToRef());
     }
 
     [Fact]
@@ -92,7 +92,7 @@ public sealed class SchemaTests
 
 file sealed class LinkTable : PgTable<LinkTable>
 {
-    public LinkTable() : base("links", "public", "l") { }
+    public LinkTable() : base("links", "public") { }
     public PgColumn<int> UserId { get; } = Integer("user_id");
     public PgColumn<int> RoleId { get; } = Integer("role_id");
     protected override IEnumerable<TableConstraint> DefineConstraints()
@@ -101,7 +101,7 @@ file sealed class LinkTable : PgTable<LinkTable>
 
 file sealed class WideTable : PgTable<WideTable>
 {
-    public WideTable() : base("wide", "public", "w") { }
+    public WideTable() : base("wide", "public") { }
     public PgColumn<DateTimeOffset> CreatedAt { get; } = Timestamptz("created_at");
     public PgColumn<Guid> Key { get; } = Uuid("key");
     public PgColumn<string> Code { get; } = Varchar("code", 50);
@@ -111,7 +111,7 @@ file sealed class WideTable : PgTable<WideTable>
 
 file sealed class WideSqlTable : SqlTable<WideSqlTable>
 {
-    public WideSqlTable() : base("wide", "dbo", "w") { }
+    public WideSqlTable() : base("wide", "dbo") { }
     public SqlColumn<string> Email { get; } = NVarChar("email", 255);
     public SqlColumn<string> Notes { get; } = NVarCharMax("notes");
     public SqlColumn<DateTime> CreatedAt { get; } = DateTime2("created_at");

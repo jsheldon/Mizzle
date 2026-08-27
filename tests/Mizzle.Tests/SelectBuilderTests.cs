@@ -2,7 +2,7 @@ namespace Mizzle.Tests;
 
 file sealed class Authors : PgTable<Authors>
 {
-    public Authors() : base("authors", alias: "a") { }
+    public Authors() : base("authors") { }
     public PgColumn<Guid> AuthorId { get; } = Uuid("author_id");
     public PgColumn<string> DisplayName { get; } = Text("display_name");
     public PgColumn<Guid> BlogId { get; } = Uuid("blog_id");
@@ -10,7 +10,7 @@ file sealed class Authors : PgTable<Authors>
 
 file sealed class Posts : PgTable<Posts>
 {
-    public Posts() : base("posts", alias: "p") { }
+    public Posts() : base("posts") { }
     public PgColumn<Guid> AuthorId { get; } = Uuid("author_id");
 }
 
@@ -25,7 +25,7 @@ public sealed class SelectBuilderWhereTests
     [Fact]
     public void WithAlias_lets_one_query_join_a_table_twice()
     {
-        var authors = new Authors();
+        var authors = new Authors().WithAlias("a");
         var other = new Authors().WithAlias("a2");
 
         var builder = new SelectBuilder()
@@ -38,8 +38,8 @@ public sealed class SelectBuilderWhereTests
             "SELECT \"a\".\"display_name\", \"a2\".\"display_name\" AS \"OtherName\" "
             + "FROM \"authors\" AS \"a\" INNER JOIN \"authors\" AS \"a2\" ON \"a\".\"blog_id\" = \"a2\".\"blog_id\"",
             sql);
-        // The original is untouched -- instances are shareable.
         Assert.Equal("a", authors.Alias);
+        Assert.Equal("authors", new Authors().Alias);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class SelectBuilderWhereTests
 
         var (sql, _) = EmitPg(builder.Build());
         Assert.Equal(
-            "SELECT \"a\".\"author_id\" AS \"Id\", \"a\".\"display_name\" FROM \"authors\" AS \"a\"",
+            "SELECT \"authors\".\"author_id\" AS \"Id\", \"authors\".\"display_name\" FROM \"authors\" AS \"authors\"",
             sql);
     }
 
@@ -72,7 +72,7 @@ public sealed class SelectBuilderWhereTests
 
         var (sql, values) = EmitPg(builder.Build());
         Assert.Equal(
-            "SELECT \"a\".\"display_name\" FROM \"authors\" AS \"a\" INNER JOIN \"posts\" AS \"p\" ON \"a\".\"author_id\" = \"p\".\"author_id\" WHERE \"a\".\"blog_id\" = $1",
+            "SELECT \"authors\".\"display_name\" FROM \"authors\" AS \"authors\" INNER JOIN \"posts\" AS \"posts\" ON \"authors\".\"author_id\" = \"posts\".\"author_id\" WHERE \"authors\".\"blog_id\" = $1",
             sql);
         Assert.Equal([blogId], values);
     }

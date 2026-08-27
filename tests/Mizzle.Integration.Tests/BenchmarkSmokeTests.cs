@@ -78,7 +78,7 @@ public sealed class BenchmarkSmokeTests : IClassFixture<PostgresFixture>
 
 file sealed class BenchUsers : PgTable<BenchUsers>
 {
-    public BenchUsers() : base("bench_users", "public", "bu") { }
+    public BenchUsers() : base("bench_users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id");
     public PgColumn<string> Email { get; } = Text("email");

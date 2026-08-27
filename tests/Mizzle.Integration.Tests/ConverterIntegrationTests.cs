@@ -13,7 +13,7 @@ public static class LegacyConvert
 
 file sealed class LegacyPersons : PgTable<LegacyPersons>
 {
-    public LegacyPersons() : base("legacy_person", "public", "a") { }
+    public LegacyPersons() : base("legacy_person", "public") { }
 
     public PgColumn<Guid> PersonId { get; } = Char("person_id", 36).Map(LegacyConvert.ToGuid, LegacyConvert.FromGuid).PrimaryKey();
     public PgColumn<DateOnly> DateOfBirth { get; } = Char("date_of_birth", 8).NotNull().Map(LegacyConvert.ToDate, LegacyConvert.FromDate);

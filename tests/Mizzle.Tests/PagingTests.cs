@@ -2,7 +2,7 @@ namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id");
     public PgColumn<string> Email { get; } = Text("email");
@@ -82,7 +82,7 @@ public sealed class PagingTests
             .Build();
         Assert.NotNull(q.Where);
         Assert.Equal(
-            "SELECT \"u\".\"email\" FROM \"public\".\"users\" AS \"u\" WHERE \"u\".\"email\" > $1 ORDER BY \"u\".\"email\"",
+            "SELECT \"users\".\"email\" FROM \"public\".\"users\" AS \"users\" WHERE \"users\".\"email\" > $1 ORDER BY \"users\".\"email\"",
             EmitSql(q));
     }
 }

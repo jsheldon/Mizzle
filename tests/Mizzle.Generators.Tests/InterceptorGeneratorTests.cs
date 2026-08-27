@@ -9,7 +9,7 @@ public sealed class InterceptorGeneratorTests
 
         public sealed class Users : PgTable<Users>
         {
-            public Users() : base("users", "public", "u") { }
+            public Users() : base("users", "public") { }
             public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
             public PgColumn<string> Email { get; } = Text("email").NotNull();
         }
@@ -46,7 +46,7 @@ public sealed class InterceptorGeneratorTests
 
         public sealed class Authors : PgTable<Authors>
         {
-            public Authors() : base("authors", "public", "a") { }
+            public Authors() : base("authors", "public") { }
             public PgColumn<System.Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
             public PgColumn<System.Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
             public PgColumn<string> DisplayName { get; } = Text("display_name").NotNull();
@@ -55,7 +55,7 @@ public sealed class InterceptorGeneratorTests
 
         public sealed class Tags : PgTable<Tags>
         {
-            public Tags() : base("tags", "public", "t") { }
+            public Tags() : base("tags", "public") { }
             public PgColumn<System.Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
             public PgColumn<string> Label { get; } = Text("label");
             public PgColumn<string> Kind { get; } = Text("kind").NotNull();
@@ -87,29 +87,29 @@ public sealed class InterceptorGeneratorTests
 
     private static string JoinedRuntimeSql()
     {
-        var authorId = new Mizzle.Ir.ColumnRef("a", "author_id", typeof(Guid));
-        var blogId = new Mizzle.Ir.ColumnRef("a", "blog_id", typeof(Guid));
+        var authorId = new Mizzle.Ir.ColumnRef("authors", "author_id", typeof(Guid));
+        var blogId = new Mizzle.Ir.ColumnRef("authors", "blog_id", typeof(Guid));
         var ir = new Mizzle.Ir.SelectQuery(
             Select:
             [
-                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("a", "display_name", typeof(string)), null),
-                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("t", "label", typeof(string)), null)
+                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("authors", "display_name", typeof(string)), null),
+                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("tags", "label", typeof(string)), null)
             ],
-            From: new Mizzle.Ir.FromSource("authors", "public", "a"),
+            From: new Mizzle.Ir.FromSource("authors", "public", "authors"),
             Joins:
             [
                 new Mizzle.Ir.JoinClause(
                     Mizzle.Ir.JoinKind.Left,
-                    new Mizzle.Ir.FromSource("tags", "public", "t"),
+                    new Mizzle.Ir.FromSource("tags", "public", "tags"),
                     new Mizzle.Ir.BinaryExpr(
                         Mizzle.Ir.BinaryOp.And,
                         new Mizzle.Ir.BinaryExpr(
                             Mizzle.Ir.BinaryOp.Eq,
-                            new Mizzle.Ir.ColumnRef("a", "favorite_tag_id", typeof(Guid)),
-                            new Mizzle.Ir.ColumnRef("t", "tag_id", typeof(Guid))),
+                            new Mizzle.Ir.ColumnRef("authors", "favorite_tag_id", typeof(Guid)),
+                            new Mizzle.Ir.ColumnRef("tags", "tag_id", typeof(Guid))),
                         new Mizzle.Ir.BinaryExpr(
                             Mizzle.Ir.BinaryOp.Eq,
-                            new Mizzle.Ir.ColumnRef("t", "kind", typeof(string)),
+                            new Mizzle.Ir.ColumnRef("tags", "kind", typeof(string)),
                             new Mizzle.Ir.ValueExpr("topic", typeof(string)))))
             ],
             Where: new Mizzle.Ir.BinaryExpr(
@@ -161,18 +161,18 @@ public sealed class InterceptorGeneratorTests
         Assert.Contains("InterceptsLocation", generated, StringComparison.Ordinal);
         Assert.Contains("ToListPrecompiledAsync", generated, StringComparison.Ordinal);
         Assert.Contains(
-            "SELECT \\\"u\\\".\\\"email\\\" FROM \\\"public\\\".\\\"users\\\" AS \\\"u\\\" WHERE \\\"u\\\".\\\"email\\\" = $1 LIMIT 10",
+            "SELECT \\\"users\\\".\\\"email\\\" FROM \\\"public\\\".\\\"users\\\" AS \\\"users\\\" WHERE \\\"users\\\".\\\"email\\\" = $1 LIMIT 10",
             generated, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Baked_sql_matches_runtime_emitter()
     {
-        var email = new Mizzle.Ir.ColumnRef("u", "email", typeof(string));
+        var email = new Mizzle.Ir.ColumnRef("users", "email", typeof(string));
         var p = new Mizzle.Ir.ParamRef(0, typeof(string));
         var ir = new Mizzle.Ir.SelectQuery(
             Select: [new Mizzle.Ir.SelectItem(email, null)],
-            From: new Mizzle.Ir.FromSource("users", "public", "u"),
+            From: new Mizzle.Ir.FromSource("users", "public", "users"),
             Joins: [],
             Where: new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, email, p),
             OrderBy: [], Limit: 10, Offset: null, Distinct: false,
@@ -236,7 +236,7 @@ public sealed class InterceptorGeneratorTests
 
             public sealed class SqlUsers : SqlTable<SqlUsers>
             {
-                public SqlUsers() : base("users", "dbo", "u") { }
+                public SqlUsers() : base("users", "dbo") { }
                 public SqlColumn<string> Email { get; } = NVarChar("email", 255);
             }
             """;
@@ -258,7 +258,7 @@ public sealed class InterceptorGeneratorTests
             """;
         var generated = RunGenerator(sqlTable, site);
         Assert.Contains(
-            "SELECT [u].[email] FROM [dbo].[users] AS [u] WHERE [u].[email] = @p0",
+            "SELECT [users].[email] FROM [dbo].[users] AS [users] WHERE [users].[email] = @p0",
             generated, StringComparison.Ordinal);
     }
 }

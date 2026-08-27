@@ -2,7 +2,7 @@ namespace Mizzle.Integration.Tests;
 
 file sealed class ProjAuthors : PgTable<ProjAuthors>
 {
-    public ProjAuthors() : base("proj_authors", "public", "a") { }
+    public ProjAuthors() : base("proj_authors", "public") { }
 
     public PgColumn<Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
     public PgColumn<Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
@@ -11,7 +11,7 @@ file sealed class ProjAuthors : PgTable<ProjAuthors>
 
 file sealed class ProjTags : PgTable<ProjTags>
 {
-    public ProjTags() : base("proj_tags", "public", "t") { }
+    public ProjTags() : base("proj_tags", "public") { }
 
     public PgColumn<Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
     public PgColumn<string> Label { get; } = Text("label").NotNull();

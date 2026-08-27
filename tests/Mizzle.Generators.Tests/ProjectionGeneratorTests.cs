@@ -11,7 +11,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Authors : PgTable<Authors>
         {
-            public Authors() : base("authors", "public", "a") { }
+            public Authors() : base("authors", "public") { }
             public PgColumn<System.Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
             public PgColumn<System.Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
             public PgColumn<string> DisplayName { get; } = Text("display_name").NotNull();
@@ -19,7 +19,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Tags : PgTable<Tags>
         {
-            public Tags() : base("tags", "public", "t") { }
+            public Tags() : base("tags", "public") { }
             public PgColumn<System.Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
             public PgColumn<string> Label { get; } = Text("label").NotNull();
             public PgColumn<string> Kind { get; } = Text("kind").NotNull();
@@ -68,6 +68,39 @@ public sealed class ProjectionGeneratorTests
     {
         var (_, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, GenerateModeCallSite);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void Typed_page_uses_generated_mapper_and_paging_executor()
+    {
+        const string callSite = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public static class PageQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var a = new Authors();
+                    var page = await db.Select(a.AuthorId, a.DisplayName)
+                        .From(a)
+                        .OrderBy(a.DisplayName)
+                        .Page(1, 25)
+                        .ToPageAsync<AuthorPageRow>(includeTotal: true);
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("global::Mizzle.Paging.Page<T>", generated, StringComparison.Ordinal);
+        Assert.Contains("ToPageAsync(global::Mizzle.Generated.Projections.AuthorPageRowProjectionMapper.Read", generated, StringComparison.Ordinal);
+        Assert.Contains("bool includeTotal = false", generated, StringComparison.Ordinal);
     }
 
     private static string MapModeCallSite(string typeName, string select = "a.AuthorId, a.DisplayName, t.Label") => $$"""
@@ -244,7 +277,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
                 public SqlColumn<string> FirstName { get; } = VarChar("first_name", 50).NotNull();
             }
@@ -310,7 +343,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class Widgets : PgTable<Widgets>
             {
-                public Widgets() : base("widgets", "public", "w") { }
+                public Widgets() : base("widgets", "public") { }
                 public PgColumn<System.Guid?> WidgetId { get; } = Text("widget_id").Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
             }
             """;
@@ -351,7 +384,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Persons : SqlTable<Persons>
         {
-            public Persons() : base("person", "dbo", "a") { }
+            public Persons() : base("person", "dbo") { }
             public SqlColumn<Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
             public SqlColumn<int> VisitCount { get; } = Int("visit_count").NotNull();
             public SqlColumn<DateOnly> DateOfBirth { get; } = VarChar("date_of_birth", 8).Map(EhrConvert.ToDateOnly, EhrConvert.FromDateOnly);
@@ -422,7 +455,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Persons : PgTable<Persons>
         {
-            public Persons() : base("persons", "public", "p") { }
+            public Persons() : base("persons", "public") { }
             public PgColumn<System.Guid> PersonId { get; } = Uuid("person_id").PrimaryKey();
             public PgColumn<string> Zip { get; } = Text("zip").NotNull();
         }
@@ -470,7 +503,7 @@ public sealed class ProjectionGeneratorTests
     {
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(AliasTables, AliasCallSite));
         Assert.Contains(
-            "SELECT \\\"p\\\".\\\"person_id\\\" AS \\\"PatientId\\\", \\\"p\\\".\\\"zip\\\" AS \\\"PostalCode\\\"",
+            "SELECT \\\"persons\\\".\\\"person_id\\\" AS \\\"PatientId\\\", \\\"persons\\\".\\\"zip\\\" AS \\\"PostalCode\\\"",
             generated,
             StringComparison.Ordinal);
     }
@@ -643,7 +676,7 @@ public sealed class ProjectionGeneratorTests
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         var generated = GeneratorTestHost.Generated(result);
         // The WHERE predicate is unaffected by the alias.
-        Assert.Contains("WHERE \\\"p\\\".\\\"person_id\\\" = $1", generated, StringComparison.Ordinal);
+        Assert.Contains("WHERE \\\"persons\\\".\\\"person_id\\\" = $1", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("AS \\\"Ignored\\\"", generated, StringComparison.Ordinal);
     }
 
@@ -661,7 +694,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Paddeds : SqlTable<Paddeds>
         {
-            public Paddeds() : base("padded", "dbo", "d") { }
+            public Paddeds() : base("padded", "dbo") { }
             public SqlColumn<Guid> PaddedId { get; } = UniqueIdentifier("padded_id").NotNull();
             public SqlColumn<string> City { get; } = VarChar("city", 35);
             public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
@@ -757,7 +790,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class EhrPersons : SqlTable<EhrPersons>
             {
-                public EhrPersons() : base("person", "dbo", "a") { }
+                public EhrPersons() : base("person", "dbo") { }
                 public SqlColumn<Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
                 public SqlColumn<string> Zip { get; } = VarChar("zip", 9);
                 public SqlColumn<Guid> LanguageId { get; } = UniqueIdentifier("language_id");
@@ -767,7 +800,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class EhrLists : SqlTable<EhrLists>
             {
-                public EhrLists() : base("mstr_lists", "dbo", "c") { }
+                public EhrLists() : base("mstr_lists", "dbo") { }
                 public SqlColumn<Guid> MstrListItemId { get; } = UniqueIdentifier("mstr_list_item_id");
                 public SqlColumn<string> MstrListItemDesc { get; } = VarChar("mstr_list_item_desc", 50).NotNull();
             }
@@ -865,7 +898,7 @@ public sealed class ProjectionGeneratorTests
     }
 
     [Fact]
-    public void Named_alias_argument_is_not_read_as_schema()
+    public void Default_alias_is_table_name_when_no_alias_is_given()
     {
         const string tables = """
             using Mizzle.SqlServer;
@@ -874,8 +907,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class Folks : SqlTable<Folks>
             {
-                // Named argument skips schema -- must not be read positionally.
-                public Folks() : base("person", alias: "a") { }
+                public Folks() : base("person") { }
                 public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
             }
             """;
@@ -903,8 +935,7 @@ public sealed class ProjectionGeneratorTests
             """;
 
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(tables, callSite));
-        Assert.Contains("FROM [person] AS [a]", generated, StringComparison.Ordinal);
-        Assert.DoesNotContain("[a].[person]", generated, StringComparison.Ordinal);
+        Assert.Contains("FROM [person] AS [person]", generated, StringComparison.Ordinal);
     }
 
     private const string LookupTables = """
@@ -914,7 +945,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Folks : SqlTable<Folks>
         {
-            public Folks() : base("person", alias: "a") { }
+            public Folks() : base("person") { }
             public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
             public SqlColumn<System.Guid> LanguageId { get; } = UniqueIdentifier("language_id");
             public SqlColumn<System.Guid> ContactPrefId { get; } = UniqueIdentifier("contact_pref_id");
@@ -922,7 +953,7 @@ public sealed class ProjectionGeneratorTests
 
         public sealed class Lookups : SqlTable<Lookups>
         {
-            public Lookups() : base("mstr_lists", alias: "c") { }
+            public Lookups() : base("mstr_lists") { }
             public SqlColumn<System.Guid> ItemId { get; } = UniqueIdentifier("mstr_list_item_id");
             public SqlColumn<string> ItemDesc { get; } = VarChar("mstr_list_item_desc", 50);
             public SqlColumn<string> ListType { get; } = VarChar("mstr_list_type", 30);
@@ -979,8 +1010,7 @@ public sealed class ProjectionGeneratorTests
         Assert.Contains("[cpref].[mstr_list_item_desc] AS [ContactPrefDescription]", generated, StringComparison.Ordinal);
         Assert.Contains("LEFT JOIN [mstr_lists] AS [lang]", generated, StringComparison.Ordinal);
         Assert.Contains("LEFT JOIN [mstr_lists] AS [cpref]", generated, StringComparison.Ordinal);
-        // The declared alias is untouched where no override is given.
-        Assert.Contains("FROM [person] AS [a]", generated, StringComparison.Ordinal);
+        Assert.Contains("FROM [person] AS [person]", generated, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1067,8 +1097,7 @@ public sealed class ProjectionGeneratorTests
             {
                 public static async Task Run(SqlDb db)
                 {
-                    // Both carry the declared alias "c" -- previously emitted
-                    // JOIN [mstr_lists] AS [c] twice and failed at the database.
+                    // Both carry the default alias "mstr_lists".
                     var first = new Lookups();
                     var second = new Lookups();
                     var person = new Folks();
@@ -1083,7 +1112,7 @@ public sealed class ProjectionGeneratorTests
 
         var result = GeneratorTestHost.Run(LookupTables, callSite);
         var diagnostic = Assert.Single(result.Diagnostics, d => d.Id == "MIZ011");
-        Assert.Contains("'c'", diagnostic.GetMessage(), StringComparison.Ordinal);
+        Assert.Contains("'mstr_lists'", diagnostic.GetMessage(), StringComparison.Ordinal);
     }
 
     [Fact]

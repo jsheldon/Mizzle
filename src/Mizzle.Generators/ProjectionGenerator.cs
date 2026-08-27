@@ -10,7 +10,8 @@ namespace Mizzle.Generators;
 // Handles the delegate-free typed terminators (ToListAsync<T>() and friends).
 // T unbound  -> generate a projection record named T from the select shape.
 // T bound    -> map into the existing type, matching members by normalized name.
-// Either way an interceptor bakes SQL + mapper through the precompiled path.
+// List/single terminators bake SQL + mapper through the precompiled path.
+// Page terminators use a generated mapper and the existing paging executor.
 [Generator]
 public sealed class ProjectionGenerator : IIncrementalGenerator
 {
@@ -116,11 +117,13 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             "FirstOrDefaultAsync" => "FirstOrDefault",
             "SingleAsync" => "Single",
             "SingleOrDefaultAsync" => "SingleOrDefault",
+            "ToPageAsync" => "Page",
+            "ToCursorPageAsync" => "CursorPage",
             _ => null
         };
         if (terminator is null
             || generic.TypeArgumentList.Arguments.Count != 1
-            || invocation.ArgumentList.Arguments.Count > 1)
+            || invocation.ArgumentList.Arguments.Count > (terminator == "Page" ? 2 : 1))
         {
             return null;
         }
@@ -131,7 +134,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         if (symbol is null
             || symbol.Name != generic.Identifier.Text
             || symbol.ContainingType.ToDisplayString() != "Mizzle.Fluent.SelectBuilder"
-            || symbol.Parameters.Length != 1)
+            || symbol.Parameters.Length != (terminator == "Page" ? 2 : 1))
         {
             return null;
         }
@@ -154,7 +157,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         var sql = spec is null ? null : BakedSqlEmitter.Emit(spec);
         if (spec is null || sql is null)
         {
-            // Only unbound T deserves MIZ007 — a bound T on a dynamic chain
+            // Only unbound T deserves MIZ007. A bound T on a dynamic chain
             // simply falls back to the runtime stub (and MIZ002 under Strict).
             // A table whose column already reported MIZ008/MIZ009 is silent
             // either way: that diagnostic points at the real line.
@@ -457,6 +460,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         var returnType = terminator switch
         {
             "ToList" => listOfT,
+            "Page" or "CursorPage" => "global::Mizzle.Paging.Page<T>",
             "First" or "Single" => "T",
             _ => "T?"
         };
@@ -474,8 +478,33 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         sb.Append(index);
         sb.AppendLine("<T>(");
         sb.AppendLine("            this global::Mizzle.Fluent.SelectBuilder builder,");
+        if (terminator == "Page")
+        {
+            sb.AppendLine("            bool includeTotal = false,");
+        }
+
         sb.AppendLine("            global::System.Threading.CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
+        if (terminator == "Page")
+        {
+            sb.Append("            var page = await builder.ToPageAsync(global::Mizzle.Generated.Projections.");
+            sb.Append(mapper);
+            sb.AppendLine(".Read, includeTotal, cancellationToken);");
+            sb.AppendLine("            return (global::Mizzle.Paging.Page<T>)(object)page;");
+            sb.AppendLine("        }");
+            return;
+        }
+
+        if (terminator == "CursorPage")
+        {
+            sb.Append("            var page = await builder.ToCursorPageAsync(global::Mizzle.Generated.Projections.");
+            sb.Append(mapper);
+            sb.AppendLine(".Read, cancellationToken);");
+            sb.AppendLine("            return (global::Mizzle.Paging.Page<T>)(object)page;");
+            sb.AppendLine("        }");
+            return;
+        }
+
         sb.Append("            var rows = await builder.ToListPrecompiledAsync(");
         sb.Append(SymbolDisplay.FormatLiteral(sql, quote: true));
         sb.Append(", global::Mizzle.Generated.Projections.");

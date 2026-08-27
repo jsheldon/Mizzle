@@ -5,8 +5,8 @@ namespace Mizzle.Postgres;
 public abstract class PgTable<TSelf> : Table<TSelf>
     where TSelf : PgTable<TSelf>
 {
-    protected PgTable(string name, string? schema = null, string? alias = null)
-        : base(name, schema, alias)
+    protected PgTable(string name, string? schema = null)
+        : base(name, schema)
     {
     }
 

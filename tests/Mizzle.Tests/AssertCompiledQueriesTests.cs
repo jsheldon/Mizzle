@@ -4,7 +4,7 @@ namespace Mizzle.Tests;
 
 file sealed class AssertUsers : PgTable<AssertUsers>
 {
-    public AssertUsers() : base("users", "public", "u") { }
+    public AssertUsers() : base("users", "public") { }
 
     public PgColumn<string> Email { get; } = Text("email");
 }

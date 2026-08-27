@@ -166,7 +166,7 @@ public sealed record BenchUserRow(int Id, string Email);
 
 internal sealed class BenchUsers : PgTable<BenchUsers>
 {
-    public BenchUsers() : base("bench_users", "public", "bu") { }
+    public BenchUsers() : base("bench_users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<string> Email { get; } = Text("email").NotNull();

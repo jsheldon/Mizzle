@@ -39,7 +39,7 @@ public sealed class PostgresPagingTests : IClassFixture<PostgresFixture>
 
 file sealed class PageUsers : PgTable<PageUsers>
 {
-    public PageUsers() : base("page_users", "public", "pu") { }
+    public PageUsers() : base("page_users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id");
     public PgColumn<string> Email { get; } = Text("email");

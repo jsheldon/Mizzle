@@ -32,12 +32,27 @@ using Mizzle.Postgres;
 
 public sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<string> Email { get; } = Text("email").NotNull().Unique();
+    public PgColumn<string> DisplayName { get; } = Varchar("display_name", 120);
+    public PgColumn<bool> IsActive { get; } = Boolean("is_active").NotNull();
+    public PgColumn<Guid> PublicId { get; } = Uuid("public_id").NotNull();
+    public PgColumn<DateTimeOffset> CreatedAt { get; } = Timestamptz("created_at").NotNull();
+    public PgColumn<DateOnly> Birthday { get; } = Date("birthday");
+    public PgColumn<long> LoginCount { get; } = BigInt("login_count");
 }
 ```
+
+The table alias defaults to the table name. Use `WithAlias` at the query site
+when one table needs another name for a self-join or repeated lookup.
+
+PostgreSQL tables include factories such as `Text`, `Varchar`, `Char`,
+`Integer`, `BigInt`, `Boolean`, `Uuid`, `Date`, `Timestamptz`, and `Identity`.
+SQL Server tables include `NVarChar`, `NVarCharMax`, `VarChar`, `Char`, `Int`,
+`BigInt`, `Bit`, `UniqueIdentifier`, `Date`, `DateTime`, `DateTime2`,
+`Timestamp`, and `Identity`.
 
 Register and query:
 
@@ -99,10 +114,10 @@ Paging on any ordered query:
 
 ```csharp
 var page = await db.Select(users.Id, users.Email)
-    .From(users.ToFrom())
-    .OrderBy(users.Email.ToRef())
+    .From(users)
+    .OrderBy(users.Email)
     .Page(2, 25)
-    .ToPageAsync(UsersMapper.Read, includeTotal: true);
+    .ToPageAsync<UserRow>(includeTotal: true);
 ```
 
 ## Storage Conversions
@@ -197,7 +212,7 @@ var rows = await db.Select(
     .ToListAsync<PostTagRow>();
 ```
 
-`WithAlias` returns a new table instance. The original table keeps its declared
+`WithAlias` returns a new table instance. The original table keeps its default
 alias and can still be shared. If two table instances in one generated query
 use the same alias, Mizzle reports `MIZ011`.
 
@@ -221,16 +236,31 @@ public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimme
 
 ## How queries execute
 
-Every query builds an immutable IR graph. Before any SQL is written, a capability
-pass checks the target dialect and throws `UnsupportedFeatureException` for anything
-it cannot do. For example, `ILike` is valid on PostgreSQL but not SQL Server.
-Mizzle reports that instead of emitting a different query.
+Every query builds an immutable IR graph. That is just a small object model for
+the query: selected columns, source table, joins, predicates, ordering, limits,
+and values. Each builder call returns the next query shape instead of mutating
+the old one.
 
-Statically-visible query chains are compiled at build time: a source generator
-reconstructs the query, bakes the exact SQL string, and intercepts the call site so
-runtime skips IR construction and emission entirely. Dynamic queries fall back to
-the runtime pipeline with a shape cache. Setting
-`<MizzleQueryMode>Strict</MizzleQueryMode>` in your project turns any
+Before any SQL is written, a capability pass checks the target dialect and
+throws `UnsupportedFeatureException` for anything it cannot do. For example,
+`ILike` is valid on PostgreSQL but not SQL Server. Mizzle reports that instead
+of emitting a different query.
+
+What that means in practice:
+
+- SQL and parameters stay separate until execution.
+- PostgreSQL and SQL Server share the same fluent surface where they can.
+- Dialect-only behavior fails clearly instead of turning into surprise SQL.
+- The same query shape can run dynamically or be picked up by the source generator.
+- Statically-visible list and single-row queries can skip runtime SQL emission.
+
+Statically-visible query chains are compiled at build time. A source generator
+reconstructs the query, bakes the SQL string, generates the projection mapper,
+and intercepts the call site. Dynamic queries fall back to the runtime pipeline
+with a shape cache. Typed paging uses the generated mapper with the normal paging
+executor so `includeTotal` and cursor behavior stay in one place.
+
+Setting `<MizzleQueryMode>Strict</MizzleQueryMode>` in your project turns any
 non-compilable query into a build error.
 
 ## What it deliberately doesn't do
@@ -239,16 +269,6 @@ non-compilable query into a build error.
   guarantee, not a gap. Check that the current surface covers your needs before
   adopting it.
 - No LINQ / `IQueryable`, no sync APIs, no migrations, no MySQL (yet).
-
-## Breaking changes in 0.1.0-alpha.3
-
-- `ParamBag` is gone. Expressions carry their values (`col.Eq(value)`); a
-  deterministic parameterization pass extracts them at compile time. Every
-  bag-taking overload and the builders' `Parameters` property were removed.
-- `IQueryExecutor` signatures changed (no bag parameter; the precompiled
-  entry point takes the built query). Custom executors must be updated.
-- The schema metadata property `IColumn.IsNotNull` is now `IsRequired`
-  (freeing `IsNotNull()` for the SQL operator).
 
 ## Building
 

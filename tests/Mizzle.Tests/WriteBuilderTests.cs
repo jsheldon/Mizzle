@@ -2,7 +2,7 @@ namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<string> Email { get; } = Text("email").NotNull();
 }
@@ -30,7 +30,7 @@ public sealed class WriteBuilderTests
             .Returning(users.Id);
         var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
-            "INSERT INTO \"public\".\"users\" (\"email\") VALUES ($1) RETURNING \"u\".\"id\"",
+            "INSERT INTO \"public\".\"users\" (\"email\") VALUES ($1) RETURNING \"users\".\"id\"",
             sql);
         Assert.Equal(["a@b.com"], values);
     }
@@ -87,7 +87,7 @@ public sealed class WriteBuilderTests
             .Returning(users.Id);
         var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
-            "DELETE FROM \"public\".\"users\" AS \"u\" WHERE \"u\".\"email\" = $1 RETURNING \"u\".\"id\"",
+            "DELETE FROM \"public\".\"users\" AS \"users\" WHERE \"users\".\"email\" = $1 RETURNING \"users\".\"id\"",
             sql);
     }
 
@@ -101,6 +101,6 @@ public sealed class WriteBuilderTests
             .Returning(users.Email);
         var q = b.Build();
         var item = Assert.Single(q.Returning);
-        Assert.Equal(new ColumnRef("u", "email", typeof(string)), item.Expr);
+        Assert.Equal(new ColumnRef("users", "email", typeof(string)), item.Expr);
     }
 }

@@ -4,7 +4,7 @@ namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
     public PgColumn<string> Email { get; } = Text("email").NotNull();
 }
 

@@ -74,7 +74,7 @@ public sealed class PostgresConcurrencyTests : IClassFixture<PostgresFixture>
 
 file sealed class ExpectUsers : PgTable<ExpectUsers>
 {
-    public ExpectUsers() : base("expect_users", "public", "eu") { }
+    public ExpectUsers() : base("expect_users", "public") { }
 
     public PgColumn<int> Id { get; } = Identity("id");
     public PgColumn<string> Email { get; } = Text("email");

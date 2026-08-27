@@ -2,7 +2,7 @@ namespace Mizzle.Tests;
 
 file sealed class Users : PgTable<Users>
 {
-    public Users() : base("users", "public", "u") { }
+    public Users() : base("users", "public") { }
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
     public PgColumn<string> Email { get; } = Text("email").NotNull();
     public PgColumn<int> Age { get; } = Integer("age");
@@ -24,7 +24,7 @@ public sealed class ColumnOperatorTests
     [Fact]
     public void Eq_value_and_column_forms()
     {
-        var u = new Users();
+        var u = new Users().WithAlias("u");
         Assert.EndsWith("WHERE \"u\".\"email\" = $1", EmitWhere(u.Email.Eq("a@b.com")), StringComparison.Ordinal);
         Assert.EndsWith("WHERE \"u\".\"id\" = \"u\".\"age\"", EmitWhere(u.Id.Eq(u.Age)), StringComparison.Ordinal);
     }
@@ -32,7 +32,7 @@ public sealed class ColumnOperatorTests
     [Fact]
     public void Comparison_null_in_between_like()
     {
-        var u = new Users();
+        var u = new Users().WithAlias("u");
         Assert.EndsWith("\"u\".\"age\" > $1", EmitWhere(u.Age.Gt(21)), StringComparison.Ordinal);
         Assert.EndsWith("\"u\".\"age\" >= $1", EmitWhere(u.Age.Gte(21)), StringComparison.Ordinal);
         Assert.EndsWith("\"u\".\"age\" < $1", EmitWhere(u.Age.Lt(65)), StringComparison.Ordinal);
@@ -49,7 +49,7 @@ public sealed class ColumnOperatorTests
     [Fact]
     public void Variadic_and_folds_left()
     {
-        var u = new Users();
+        var u = new Users().WithAlias("u");
         Assert.EndsWith(
             "WHERE ((\"u\".\"id\" = $1 AND \"u\".\"age\" > $2) AND \"u\".\"email\" = $3)",
             EmitWhere(Sql.And(u.Id.Eq(1), u.Age.Gt(2), u.Email.Eq("x"))),

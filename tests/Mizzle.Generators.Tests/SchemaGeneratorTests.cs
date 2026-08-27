@@ -12,7 +12,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Users : PgTable<Users>
             {
-                public Users() : base("users", "public", "u") { }
+                public Users() : base("users", "public") { }
                 public PgColumn<int> Id { get; } = Identity("id");
                 public PgColumn<string> Email { get; } = Text("email").NotNull();
             }
@@ -35,7 +35,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Documents : SqlTable<Documents>
             {
-                public Documents() : base("documents", alias: "d") { }
+                public Documents() : base("documents") { }
                 public SqlColumn<System.Guid> DocumentId { get; } = UniqueIdentifier("document_id").PrimaryKey();
             }
             """;
@@ -55,7 +55,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Events : PgTable<Events>
             {
-                public Events() : base("events", "public", "e") { }
+                public Events() : base("events", "public") { }
                 public PgColumn<System.DateTimeOffset> CreatedAt { get; } = Timestamptz("created_at").NotNull();
             }
             """;
@@ -75,7 +75,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Books : SqlTable<Books>
             {
-                public Books() : base("books", alias: "b") { }
+                public Books() : base("books") { }
                 public SqlColumn<System.Guid> BookId { get; } = UniqueIdentifier("book_id").PrimaryKey();
                 public SqlColumn<string> Subtitle { get; } = NVarCharMax("subtitle");
                 public SqlColumn<System.Guid> PublisherId { get; } = UniqueIdentifier("publisher_id");
@@ -104,7 +104,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Users : PgTable<Users>
             {
-                public Users() : base("users", "public", "u") { }
+                public Users() : base("users", "public") { }
                 public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
                 public PgColumn<string> Email { get; } = Text("email").NotNull();
             }
@@ -136,7 +136,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
                 public SqlColumn<System.DateOnly> DateOfBirth { get; } = Char("date_of_birth", 8).Map(EhrConvert.ToDate, EhrConvert.FromDate);
             }
@@ -163,7 +163,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(s => System.Guid.Parse(s), g => g.ToString());
             }
             """;
@@ -188,7 +188,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<System.Guid?> PersonId { get; } = Char("person_id", 36).Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
             }
             """;
@@ -217,7 +217,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<System.Guid?> PersonId { get; } = Char("person_id", 36).Map(NullableConvert.ToGuid, NullableConvert.FromGuid);
             }
             """;
@@ -243,7 +243,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class LegacyPersons : SqlTable<LegacyPersons>
             {
-                public LegacyPersons() : base("person", "dbo", "a") { }
+                public LegacyPersons() : base("person", "dbo") { }
                 public SqlColumn<string?> Label { get; } = Char("label", 36).Map(NullableConvert.ToLabel, NullableConvert.FromLabel);
             }
             """;
@@ -264,7 +264,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Users : PgTable<Users>
             {
-                public Users() : base("users", "public", "u") { }
+                public Users() : base("users", "public") { }
                 public SqlColumn<string> Email { get; } = null!;
             }
             """;
@@ -284,7 +284,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Paddeds : SqlTable<Paddeds>
             {
-                public Paddeds() : base("padded", "dbo", "d") { }
+                public Paddeds() : base("padded", "dbo") { }
                 public SqlColumn<Guid> PaddedId { get; } = UniqueIdentifier("padded_id").NotNull();
                 public SqlColumn<string> City { get; } = VarChar("city", 35);
                 public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
@@ -307,7 +307,7 @@ public sealed class SchemaGeneratorTests
 
             public sealed class Paddeds : SqlTable<Paddeds>
             {
-                public Paddeds() : base("padded", "dbo", "d") { }
+                public Paddeds() : base("padded", "dbo") { }
                 public SqlColumn<string> City { get; } = VarChar("city", 35);
             }
             """;

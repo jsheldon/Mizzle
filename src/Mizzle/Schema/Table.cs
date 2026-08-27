@@ -6,11 +6,11 @@ namespace Mizzle.Schema;
 public abstract class Table<TSelf> : ITable
     where TSelf : Table<TSelf>
 {
-    protected Table(string name, string? schema = null, string? alias = null)
+    protected Table(string name, string? schema = null)
     {
         Name = name;
         Schema = schema;
-        Alias = alias ?? name;
+        Alias = name;
         BindColumns();
         Constraints = [..DefineConstraints()];
     }
@@ -28,7 +28,7 @@ public abstract class Table<TSelf> : ITable
 
     // A second instance of the same table under a different alias, so one query
     // can join it more than once (lookup tables, self-joins). Returns a new
-    // instance -- the original keeps its declared alias and stays shareable.
+    // instance. The original keeps its default alias and stays shareable.
     // Requires TSelf to have a parameterless constructor.
     public TSelf WithAlias(string alias)
     {

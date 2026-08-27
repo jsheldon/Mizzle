@@ -41,7 +41,7 @@ public sealed class SqlServerSelectTests : IClassFixture<SqlServerFixture>
 
 file sealed class SqlUsers : SqlTable<SqlUsers>
 {
-    public SqlUsers() : base("users", "dbo", "u") { }
+    public SqlUsers() : base("users", "dbo") { }
 
     public SqlColumn<int> Id { get; } = Identity("id");
     public SqlColumn<string> Email { get; } = NVarChar("email", 255);

@@ -17,7 +17,7 @@ public sealed class TableFactsTests
             using Mizzle.Postgres;
             public sealed class Users : PgTable<Users>
             {
-                public Users() : base("users", "public", "u") { }
+                public Users() : base("users", "public") { }
                 public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
                 public PgColumn<string> Email { get; } = Text("email").NotNull();
             }
@@ -27,7 +27,7 @@ public sealed class TableFactsTests
         Assert.NotNull(facts);
         Assert.Equal("users", facts!.TableName);
         Assert.Equal("public", facts.Schema);
-        Assert.Equal("u", facts.Alias);
+        Assert.Equal("users", facts.Alias);
         Assert.True(facts.IsPostgres);
         Assert.Collection(
             facts.Columns,
@@ -86,7 +86,7 @@ public sealed class TableFactsTests
             using Mizzle.SqlServer;
             public sealed class Users : SqlTable<Users>
             {
-                public Users() : base("users", "dbo", "u") { }
+                public Users() : base("users", "dbo") { }
                 public SqlColumn<string> Email { get; } = NVarChar("email", 255);
             }
             """;

@@ -11,7 +11,7 @@ namespace Mizzle.Generators;
 //     [.InnerJoin(u, cond)] [.LeftJoin(u, cond)]           (legacy forms)
 //     [.Where(cond, ...)] [.Where(t.Col, value)]           (repeatable, AND-combined)
 //     [.OrderBy(t.Col)] [.OrderByDesc(t.Col)] [.OrderBy(t.Col.ToRef())]
-//     [.Distinct()] [.Limit(<literal>)] [.Offset(<literal>)]
+//     [.Distinct()] [.Limit(<literal>)] [.Offset(<literal>)] [.Page(<literal>, <literal>)]
 //     .ToListAsync(...)
 // Conditions must be X.Eq(Y): column-vs-column or column-vs-runtime-bind.
 // Returns null for anything the generator cannot prove at compile time.
@@ -171,6 +171,15 @@ internal static class BakedChainWalker
                     break;
                 case "Offset" when args.Count == 1 && state.Offset is null && TryIntLiteral(args[0].Expression, out var offsetValue):
                     state.Offset = offsetValue;
+                    break;
+                case "Page" when args.Count == 2
+                    && state.Limit is null
+                    && state.Offset is null
+                    && TryIntLiteral(args[0].Expression, out var page)
+                    && TryIntLiteral(args[1].Expression, out var pageSize)
+                    && page >= 1:
+                    state.Limit = pageSize;
+                    state.Offset = (page - 1) * pageSize;
                     break;
                 case "Distinct" when args.Count == 0:
                     state.Distinct = true;
