@@ -105,61 +105,106 @@ var page = await db.Select(users.Id, users.Email)
     .ToPageAsync(UsersMapper.Read, includeTotal: true);
 ```
 
-## Legacy storage types
+## Storage Conversions
 
-When the database stores something in a shape your domain shouldn't see (GUIDs
-in `char(36)`, dates in `char(8)`, `'Y'/'N'` booleans), declare the conversion
-once on the column with static method references:
+Some databases store values in a shape you do not want in your application:
+GUIDs in `char(36)`, dates in `char(8)`, or flags as `'Y'` and `'N'`. Declare
+that conversion on the column:
 
 ```csharp
-public SqlColumn<Guid> PersonId { get; } =
-    Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
+public SqlColumn<Guid> AccountId { get; } =
+    Char("account_id", 36)
+        .Map(AccountConvert.ToGuid, AccountConvert.FromGuid)
+        .PrimaryKey();
 ```
 
-Queries bind converted values (`Where(t.PersonId.Eq(guid))` sends a string, so
-indexes still seek), and generated mappers call the converter directly — no
-reflection, no runtime registry. The converters must be static method
-references (not lambdas) so the source generator can bake them; a lambda is a
-build error (`MIZ008`).
+Queries use the mapped type:
+
+```csharp
+await db.Select(accounts.AccountId, accounts.Email)
+    .From(accounts)
+    .Where(accounts.AccountId.Eq(accountId))
+    .SingleAsync<AccountRow>();
+```
+
+The write side receives the storage value, so the predicate above sends a
+string to the database. Generated mappers call the read converter directly.
+Converters must be static method references, not lambdas, so the generator can
+see and bake the call. Lambdas report `MIZ008`.
 
 ## Projecting into domain types
 
-A typed terminator matches columns to members by name, ignoring `_` and case.
-When the names differ, alias the column at the select site:
+Typed terminators come in two modes.
+
+If the result type does not exist, Mizzle generates a record from the selected
+columns:
 
 ```csharp
-var profile = await db.Select(
-        persons.PersonId.As("PatientId"),
-        persons.Zip.As("PostalCode"),
-        persons.FirstName)                 // already matches
-    .From(persons)
-    .FirstOrDefaultAsync<PatientProfile>(ct);
+var rows = await db.Select(users.Id, users.Email)
+    .From(users)
+    .ToListAsync<UserRow>();
 ```
 
-`As` returns a copy, so the table's own column is unchanged, and it emits a real
-SQL alias: `SELECT [a].[person_id] AS [PatientId]`. The existing projection
-diagnostics report the aliased name, so a typo is `MIZ003` and a type mismatch
-is `MIZ010`, both pointing at your call site.
+If the result type already exists, Mizzle maps into it by normalized member
+name. Underscores and casing are ignored, so `display_name` can match
+`DisplayName`.
 
-One table can appear in a query more than once -- a lookup table joined for
-several coded fields, or a self-join. Each instance needs its own alias:
+When a column name and member name do not line up, use `As` at the select site:
 
 ```csharp
-internal static class Ehr
-{
-    public static readonly Persons   Person      = new();
-    public static readonly MstrLists Language    = new MstrLists().WithAlias("lang");
-    public static readonly MstrLists ContactPref = new MstrLists().WithAlias("cpref");
-}
+var row = await db.Select(
+        books.BookId.As("Id"),
+        books.DisplayTitle.As("Title"),
+        authors.DisplayName.As("Author"))
+    .From(books)
+    .InnerJoin(authors).On(books.AuthorId.Eq(authors.AuthorId))
+    .SingleAsync<BookSummary>(ct);
 ```
 
-`WithAlias` returns a new instance, so the original keeps its declared alias and
-stays shareable. It works the same on a local variable. Two tables sharing an
-alias in one query is a build error (`MIZ011`) rather than SQL the database
-rejects.
+`As` returns a copy of the column. The table's column stays unchanged, and SQL
+gets a real alias such as `AS [Title]`. Projection diagnostics use the aliased
+name, so a typo reports `MIZ003` and a type mismatch reports `MIZ010` at the
+call site.
 
-Legacy schemas often store blank-padded `CHAR`. Opt the whole compilation into
-trimming string reads:
+The delegate overloads are always runtime mapped:
+
+```csharp
+var rows = await db.Select(users.Id, users.Email)
+    .From(users)
+    .ToListAsync(r => new UserRow(r.GetInt32(0), r.GetString(1)));
+```
+
+The delegate-free typed terminators need a statically visible query chain so
+the source generator can intercept the call. If you pass around a dynamic
+`SelectBuilder`, use the delegate overload.
+
+## Reusing Tables
+
+Use `WithAlias` when one table appears more than once in a query. It works for
+self-joins and for lookup tables used in several roles:
+
+```csharp
+var primaryTag = new Tags().WithAlias("primary_tag");
+var secondaryTag = new Tags().WithAlias("secondary_tag");
+
+var rows = await db.Select(
+        posts.Title,
+        primaryTag.Label.As("PrimaryTag"),
+        secondaryTag.Label.As("SecondaryTag"))
+    .From(posts)
+    .LeftJoin(primaryTag).On(posts.PrimaryTagId.Eq(primaryTag.TagId))
+    .LeftJoin(secondaryTag).On(posts.SecondaryTagId.Eq(secondaryTag.TagId))
+    .ToListAsync<PostTagRow>();
+```
+
+`WithAlias` returns a new table instance. The original table keeps its declared
+alias and can still be shared. If two table instances in one generated query
+use the same alias, Mizzle reports `MIZ011`.
+
+## Trimming Strings
+
+Databases with fixed-width text columns often return padded strings. You can opt
+generated mappers into trimming string reads:
 
 ```xml
 <PropertyGroup>
@@ -167,9 +212,8 @@ trimming string reads:
 </PropertyGroup>
 ```
 
-Trimming applies to string storage reads only, before any `Map` converter, and
-never on write — so converters stop needing to defend against padding. Exclude a
-column where trailing whitespace is meaningful:
+Trimming applies to string storage reads before any `Map` converter. It does
+not run on writes. Exclude a column when trailing whitespace is meaningful:
 
 ```csharp
 public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
