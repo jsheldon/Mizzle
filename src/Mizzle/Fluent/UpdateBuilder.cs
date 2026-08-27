@@ -12,14 +12,13 @@ public sealed class UpdateBuilder
     private readonly EquatableList<SelectItem> _returning;
     private readonly int? _expect;
 
-    public UpdateBuilder(ITable table, ParamBag parameters, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, parameters, executor, overlay, [], null, [], null)
+    public UpdateBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
+        : this(table, executor, overlay, [], null, [], null)
     {
     }
 
     private UpdateBuilder(
         ITable table,
-        ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
         EquatableList<(string Column, Expr Value)> set,
@@ -28,7 +27,6 @@ public sealed class UpdateBuilder
         int? expect)
     {
         _table = table;
-        Parameters = parameters;
         _executor = executor;
         Overlay = overlay;
         _set = set;
@@ -37,24 +35,16 @@ public sealed class UpdateBuilder
         _expect = expect;
     }
 
-    public ParamBag Parameters { get; }
-
     public QueryOptions? Overlay { get; }
 
     public UpdateBuilder Set(IColumn column, object? value)
-    {
-        var param = Parameters.Add(value, column.ClrType);
-        return Copy(set: [.._set, (column.Name, (Expr)param)]);
-    }
+        => Copy(set: [.._set, (column.Name, (Expr)new ValueExpr(value, column.ClrType))]);
 
     public UpdateBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public UpdateBuilder Where(IColumn column, object? value)
-    {
-        var param = Parameters.Add(value, column.ClrType);
-        return Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), param));
-    }
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
 
     public UpdateBuilder Returning(params IColumn[] columns)
         => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
@@ -77,12 +67,12 @@ public sealed class UpdateBuilder
     public Task<IReadOnlyList<T>> ToListAsync<T>(
         Func<System.Data.Common.DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().QueryAsync(Build(), Parameters, map, Overlay, cancellationToken);
+        => Executor().QueryAsync(Build(), map, Overlay, cancellationToken);
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var query = Build();
-        var affected = await Executor().ExecuteAsync(query, Parameters, Overlay, cancellationToken);
+        var affected = await Executor().ExecuteAsync(query, Overlay, cancellationToken);
         if (_expect is int expected && affected != expected)
         {
             throw new ConcurrencyException(expected, affected);
@@ -139,7 +129,6 @@ public sealed class UpdateBuilder
         QueryOptions? overlay = null)
         => new(
             _table,
-            Parameters,
             _executor,
             overlay ?? Overlay,
             set ?? _set,

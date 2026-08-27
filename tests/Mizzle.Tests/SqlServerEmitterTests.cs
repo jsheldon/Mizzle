@@ -11,7 +11,7 @@ public sealed class SqlServerEmitterTests
             Offset = 20,
             OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
         };
-        var sql = new SqlServerEmitter().Emit(query, new ParamBag());
+        var sql = new SqlServerEmitter().Emit(query, []);
         Assert.Equal(
             "SELECT [u].[email] FROM [public].[users] AS [u] ORDER BY [u].[email] OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY",
             sql.Sql);
@@ -25,7 +25,7 @@ public sealed class SqlServerEmitterTests
             Offset = 20,
             OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
         };
-        var sql = new SqlServerEmitter().Emit(query, new ParamBag());
+        var sql = new SqlServerEmitter().Emit(query, []);
         Assert.Equal(
             "SELECT [u].[email] FROM [public].[users] AS [u] ORDER BY [u].[email] OFFSET 20 ROWS",
             sql.Sql);
@@ -36,21 +36,20 @@ public sealed class SqlServerEmitterTests
     {
         var query = BaseSelect() with { Limit = 10 };
         var ex = Assert.Throws<InvalidOperationException>(
-            () => new SqlServerEmitter().Emit(query, new ParamBag()));
+            () => new SqlServerEmitter().Emit(query, []));
         Assert.Contains("ORDER BY", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void SqlServer_ilike_throws()
     {
-        var bag = new ParamBag();
-        var p = bag.Add("%x%", typeof(string));
+        var p = new ParamRef(0, typeof(string));
         var query = BaseSelect() with
         {
             Where = new BinaryExpr(BinaryOp.ILike, new ColumnRef("u", "email", typeof(string)), p)
         };
         var ex = Assert.Throws<UnsupportedFeatureException>(
-            () => new SqlServerEmitter().Emit(query, bag));
+            () => new SqlServerEmitter().Emit(query, ["%x%"]));
         Assert.Equal(Feature.ILike, ex.Feature);
         Assert.Equal(DialectKind.SqlServer, ex.Dialect);
     }
@@ -73,7 +72,7 @@ public sealed class SqlServerEmitterTests
             ],
             OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
         };
-        var sql = new SqlServerEmitter().Emit(query, new ParamBag());
+        var sql = new SqlServerEmitter().Emit(query, []);
         Assert.Equal(
             "SELECT DISTINCT [u].[email] FROM [public].[users] AS [u] INNER JOIN [public].[posts] AS [p] ON [p].[user_id] = [u].[id] ORDER BY [u].[email]",
             sql.Sql);

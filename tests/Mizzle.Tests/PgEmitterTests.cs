@@ -18,7 +18,7 @@ public sealed class PgEmitterTests
             RecursiveWith: false,
             UnionAll: []);
 
-        var sql = new PgEmitter().Emit(query, new ParamBag());
+        var sql = new PgEmitter().Emit(query, []);
 
         Assert.Equal("SELECT \"u\".\"email\" FROM \"public\".\"users\" AS \"u\"", sql.Sql);
         Assert.Empty(sql.Parameters);
@@ -27,8 +27,7 @@ public sealed class PgEmitterTests
     [Fact]
     public void Where_eq_emits_parameterized_predicate()
     {
-        var bag = new ParamBag();
-        var p = bag.Add("a@b.com", typeof(string));
+        var p = new ParamRef(0, typeof(string));
         var query = new SelectQuery(
             Select: [new SelectItem(new ColumnRef("u", "email", typeof(string)), null)],
             From: new FromSource("users", "public", "u"),
@@ -42,7 +41,7 @@ public sealed class PgEmitterTests
             RecursiveWith: false,
             UnionAll: []);
 
-        var sql = new PgEmitter().Emit(query, bag);
+        var sql = new PgEmitter().Emit(query, ["a@b.com"]);
 
         Assert.Equal(
             "SELECT \"u\".\"email\" FROM \"public\".\"users\" AS \"u\" WHERE \"u\".\"email\" = $1",
@@ -54,7 +53,7 @@ public sealed class PgEmitterTests
     public void Postgres_limit_offset()
     {
         var query = BaseSelect() with { Limit = 10, Offset = 20 };
-        var sql = new PgEmitter().Emit(query, new ParamBag());
+        var sql = new PgEmitter().Emit(query, []);
         Assert.Equal(
             "SELECT \"u\".\"email\" FROM \"public\".\"users\" AS \"u\" LIMIT 10 OFFSET 20",
             sql.Sql);
@@ -78,10 +77,23 @@ public sealed class PgEmitterTests
             ],
             OrderBy = [new OrderByItem(new ColumnRef("u", "email", typeof(string)), Descending: false)]
         };
-        var sql = new PgEmitter().Emit(query, new ParamBag());
+        var sql = new PgEmitter().Emit(query, []);
         Assert.Equal(
             "SELECT DISTINCT \"u\".\"email\" FROM \"public\".\"users\" AS \"u\" INNER JOIN \"public\".\"posts\" AS \"p\" ON \"p\".\"user_id\" = \"u\".\"id\" ORDER BY \"u\".\"email\"",
             sql.Sql);
+    }
+
+    [Fact]
+    public void Unparameterized_value_expr_throws_at_emit()
+    {
+        var query = BaseSelect() with
+        {
+            Where = new BinaryExpr(
+                BinaryOp.Eq,
+                new ColumnRef("u", "email", typeof(string)),
+                new ValueExpr("x", typeof(string)))
+        };
+        Assert.Throws<InvalidOperationException>(() => new PgEmitter().Emit(query, []));
     }
 
     internal static SelectQuery BaseSelect() => new(

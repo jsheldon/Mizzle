@@ -9,6 +9,12 @@ file sealed class Users : PgTable<Users>
 
 public sealed class WriteBuilderTests
 {
+    private static (string Sql, IReadOnlyList<object?> Values) EmitPg(Query q)
+    {
+        var (canonical, values) = Parameterizer.Run(q);
+        return (new PgEmitter().Emit(canonical, values).Sql, values);
+    }
+
     private static SelectQuery StagingSelect() => new(
         Select: [new SelectItem(new ColumnRef("s", "email", typeof(string)), null)],
         From: new FromSource("staging", "public", "s"),
@@ -19,46 +25,46 @@ public sealed class WriteBuilderTests
     public void Insert_values_returning_builds_expected_pg_sql()
     {
         var users = new Users();
-        var b = new InsertBuilder(users, new ParamBag())
+        var b = new InsertBuilder(users)
             .Value(users.Email, "a@b.com")
             .Returning(users.Id);
-        var sql = new PgEmitter().Emit(b.Build(), b.Parameters);
+        var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
             "INSERT INTO \"public\".\"users\" (\"email\") VALUES ($1) RETURNING \"u\".\"id\"",
-            sql.Sql);
-        Assert.Equal(["a@b.com"], sql.Parameters);
+            sql);
+        Assert.Equal(["a@b.com"], values);
     }
 
     [Fact]
     public void Insert_two_rows_builds_two_value_tuples()
     {
         var users = new Users();
-        var b = new InsertBuilder(users, new ParamBag())
+        var b = new InsertBuilder(users)
             .Value(users.Email, "a@b.com")
             .NewRow()
             .Value(users.Email, "c@d.com");
-        var sql = new PgEmitter().Emit(b.Build(), b.Parameters);
+        var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
             "INSERT INTO \"public\".\"users\" (\"email\") VALUES ($1), ($2)",
-            sql.Sql);
+            sql);
     }
 
     [Fact]
     public void Insert_select_builds_insert_from_select()
     {
         var users = new Users();
-        var b = new InsertBuilder(users, new ParamBag()).Select(StagingSelect(), users.Email);
-        var sql = new PgEmitter().Emit(b.Build(), b.Parameters);
+        var b = new InsertBuilder(users).Select(StagingSelect(), users.Email);
+        var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
             "INSERT INTO \"public\".\"users\" (\"email\") SELECT \"s\".\"email\" FROM \"public\".\"staging\" AS \"s\"",
-            sql.Sql);
+            sql);
     }
 
     [Fact]
     public void Insert_with_values_then_select_throws()
     {
         var users = new Users();
-        var b = new InsertBuilder(users, new ParamBag()).Value(users.Email, "x");
+        var b = new InsertBuilder(users).Value(users.Email, "x");
         Assert.Throws<InvalidOperationException>(() => b.Select(StagingSelect(), users.Email));
     }
 
@@ -66,7 +72,7 @@ public sealed class WriteBuilderTests
     public void Insert_row_with_different_columns_throws()
     {
         var users = new Users();
-        var b = new InsertBuilder(users, new ParamBag())
+        var b = new InsertBuilder(users)
             .Value(users.Email, "a@b.com")
             .NewRow();
         Assert.Throws<InvalidOperationException>(() => b.Value(users.Id, 5).Build());
@@ -76,20 +82,20 @@ public sealed class WriteBuilderTests
     public void Delete_where_returning_builds_expected_pg_sql()
     {
         var users = new Users();
-        var b = new DeleteBuilder(users, new ParamBag())
+        var b = new DeleteBuilder(users)
             .Where(users.Email, "a@b.com")
             .Returning(users.Id);
-        var sql = new PgEmitter().Emit(b.Build(), b.Parameters);
+        var (sql, values) = EmitPg(b.Build());
         Assert.Equal(
             "DELETE FROM \"public\".\"users\" AS \"u\" WHERE \"u\".\"email\" = $1 RETURNING \"u\".\"id\"",
-            sql.Sql);
+            sql);
     }
 
     [Fact]
     public void Update_returning_flows_into_query()
     {
         var users = new Users();
-        var b = new UpdateBuilder(users, new ParamBag())
+        var b = new UpdateBuilder(users)
             .Set(users.Email, "new@b.com")
             .Where(users.Id, 1)
             .Returning(users.Email);

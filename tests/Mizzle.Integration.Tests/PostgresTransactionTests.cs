@@ -23,13 +23,11 @@ public sealed class PostgresTransactionTests : IClassFixture<PostgresFixture>
         await EnsureUsersTable();
         var db = new PostgresDb(_fx.DataSource);
         var users = new Users();
-        var bag = new ParamBag();
-        var email = bag.Add("tx@b.com", typeof(string));
+        var email = new ValueExpr("tx@b.com", typeof(string));
         await db.Transaction(async tx =>
         {
             await tx.ExecuteAsync(
-                new InsertQuery(users.ToFrom(), ["email"], [[email]], null, [], [], false),
-                bag);
+                new InsertQuery(users.ToFrom(), ["email"], [[email]], null, [], [], false));
         });
 
         var rows = await db.Select(users.Email).From(users.ToFrom()).ToListAsync(r => r.GetString(0));
@@ -42,15 +40,13 @@ public sealed class PostgresTransactionTests : IClassFixture<PostgresFixture>
         await EnsureUsersTable();
         var db = new PostgresDb(_fx.DataSource);
         var users = new Users();
-        var bag = new ParamBag();
-        var email = bag.Add("rollback@b.com", typeof(string));
+        var email = new ValueExpr("rollback@b.com", typeof(string));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
             await db.Transaction(async tx =>
             {
                 await tx.ExecuteAsync(
-                    new InsertQuery(users.ToFrom(), ["email"], [[email]], null, [], [], false),
-                    bag);
+                    new InsertQuery(users.ToFrom(), ["email"], [[email]], null, [], [], false));
                 throw new InvalidOperationException("boom");
             });
         });

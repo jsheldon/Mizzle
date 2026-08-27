@@ -6,7 +6,7 @@ using Mizzle.Ir;
 
 public sealed class PgEmitter : ISqlEmitter
 {
-    public CompiledSql Emit(Query query, ParamBag parameters)
+    public CompiledSql Emit(Query query, IReadOnlyList<object?> values)
     {
         CapabilityChecker.Check(
             EmitterFeatures.For(DialectKind.Postgres, FeatureCollector.Collect(query)),
@@ -34,7 +34,7 @@ public sealed class PgEmitter : ISqlEmitter
                 throw new NotSupportedException($"Postgres emitter does not support {query.GetType().Name} yet.");
         }
 
-        return new CompiledSql(sql.ToString(), parameters.Values);
+        return new CompiledSql(sql.ToString(), values);
     }
 
     private static void WriteWithPrefix(StringBuilder sql, IReadOnlyList<CteClause> with, bool recursiveWith)
@@ -235,6 +235,7 @@ public sealed class PgEmitter : ISqlEmitter
     {
         ColumnRef col => $"{Quote(col.TableAlias)}.{Quote(col.ColumnName)}",
         ParamRef param => $"${param.Slot + 1}",
+        ValueExpr => throw new InvalidOperationException("Query was not parameterized before emit."),
         BinaryExpr bin => Binary(bin),
         UnaryExpr unary => Unary(unary),
         AggregateExpr agg => Aggregate(agg),

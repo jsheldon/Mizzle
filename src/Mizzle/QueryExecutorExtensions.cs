@@ -7,7 +7,6 @@ public static class QueryExecutorExtensions
     public static Task<int> ExecuteAsync(
         this IQueryExecutor executor,
         Query query,
-        ParamBag bag,
         CancellationToken cancellationToken = default)
-        => executor.ExecuteAsync(query, bag, overlay: null, cancellationToken);
+        => executor.ExecuteAsync(query, overlay: null, cancellationToken);
 }

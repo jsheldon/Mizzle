@@ -53,9 +53,8 @@ public sealed class InterceptorGeneratorTests
     [Fact]
     public void Baked_sql_matches_runtime_emitter()
     {
-        var bag = new Mizzle.Ir.ParamBag();
         var email = new Mizzle.Ir.ColumnRef("u", "email", typeof(string));
-        var p = bag.Add("x", typeof(string));
+        var p = new Mizzle.Ir.ParamRef(0, typeof(string));
         var ir = new Mizzle.Ir.SelectQuery(
             Select: [new Mizzle.Ir.SelectItem(email, null)],
             From: new Mizzle.Ir.FromSource("users", "public", "u"),
@@ -63,7 +62,7 @@ public sealed class InterceptorGeneratorTests
             Where: new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, email, p),
             OrderBy: [], Limit: 10, Offset: null, Distinct: false,
             With: [], RecursiveWith: false, UnionAll: []);
-        var runtime = new Mizzle.Postgres.PgEmitter().Emit(ir, bag).Sql;
+        var runtime = new Mizzle.Postgres.PgEmitter().Emit(ir, ["x"]).Sql;
         var generated = RunGenerator(UsersTable, CallSite);
         var escaped = runtime.Replace("\"", "\\\"", StringComparison.Ordinal);
         Assert.Contains(escaped, generated, StringComparison.Ordinal);

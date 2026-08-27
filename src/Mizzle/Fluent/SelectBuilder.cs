@@ -21,13 +21,12 @@ public sealed class SelectBuilder
 
     private readonly IQueryExecutor? _executor;
 
-    public SelectBuilder(ParamBag parameters, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(parameters, executor, overlay, [], null, [], null, [], null, null, false, [], false, [])
+    public SelectBuilder(IQueryExecutor? executor = null, QueryOptions? overlay = null)
+        : this(executor, overlay, [], null, [], null, [], null, null, false, [], false, [])
     {
     }
 
     private SelectBuilder(
-        ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
         EquatableList<SelectItem> select,
@@ -42,7 +41,6 @@ public sealed class SelectBuilder
         bool recursiveWith,
         EquatableList<SelectQuery> unionAll)
     {
-        Parameters = parameters;
         _executor = executor;
         Overlay = overlay;
         _select = select;
@@ -58,8 +56,6 @@ public sealed class SelectBuilder
         _unionAll = unionAll;
     }
 
-    public ParamBag Parameters { get; }
-
     public QueryOptions? Overlay { get; }
 
     public SelectBuilder Select(params ColumnRef[] columns)
@@ -74,10 +70,7 @@ public sealed class SelectBuilder
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public SelectBuilder Where(IColumn column, object? value)
-    {
-        var param = Parameters.Add(value, column.ClrType);
-        return Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), param));
-    }
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
 
     public SelectBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
@@ -131,7 +124,7 @@ public sealed class SelectBuilder
         for (var i = 0; i < cursor.Length; i++)
         {
             var column = cursor[i].Column.ToRef();
-            var value = Parameters.Add(cursor[i].Value, cursor[i].Column.ClrType);
+            var value = new ValueExpr(cursor[i].Value, cursor[i].Column.ClrType);
             var comparison = _orderBy[i].Descending
                 ? new BinaryExpr(BinaryOp.Lt, column, value)
                 : new BinaryExpr(BinaryOp.Gt, column, value);
@@ -168,7 +161,7 @@ public sealed class SelectBuilder
     public Task<IReadOnlyList<T>> ToListAsync<T>(
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().QueryAsync(Build(), Parameters, map, Overlay, cancellationToken);
+        => Executor().QueryAsync(Build(), map, Overlay, cancellationToken);
 
     public async Task<T> FirstAsync<T>(
         Func<DbDataReader, T> map,
@@ -220,14 +213,14 @@ public sealed class SelectBuilder
     public IAsyncEnumerable<T> ToAsyncEnumerable<T>(
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().StreamAsync(Build(), Parameters, map, Overlay, cancellationToken);
+        => Executor().StreamAsync(Build(), map, Overlay, cancellationToken);
 
     [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
     public Task<IReadOnlyList<T>> ToListPrecompiledAsync<T>(
         string sql,
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().QueryPrecompiledAsync(sql, Parameters, map, Overlay, cancellationToken);
+        => Executor().QueryPrecompiledAsync(sql, Build(), map, Overlay, cancellationToken);
 
     public Task<Page<T>> ToPageAsync<T>(
         Func<DbDataReader, T> map,
@@ -255,7 +248,6 @@ public sealed class SelectBuilder
         int? total = null;
         var rows = await Executor().QueryAsync(
             fetch,
-            Parameters,
             reader =>
             {
                 if (includeTotal)
@@ -290,7 +282,6 @@ public sealed class SelectBuilder
         EquatableList<SelectQuery>? unionAll = null,
         QueryOptions? overlay = null)
         => new(
-            Parameters,
             _executor,
             overlay ?? Overlay,
             select ?? _select,

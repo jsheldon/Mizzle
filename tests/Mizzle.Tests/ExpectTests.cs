@@ -22,18 +22,14 @@ public sealed class ExpectTests
     [Fact]
     public void SqlServer_lock_emits_sp_getapplock()
     {
-        var bag = new ParamBag();
-        bag.Add("k", typeof(string));
-        var sql = new SqlServerEmitter().Emit(new LockQuery("k"), bag);
+        var sql = new SqlServerEmitter().Emit(new LockQuery("k"), ["k"]);
         Assert.Contains("sp_getapplock", sql.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Postgres_lock_emits_advisory_lock()
     {
-        var bag = new ParamBag();
-        bag.Add("k", typeof(string));
-        var sql = new PgEmitter().Emit(new LockQuery("k"), bag);
+        var sql = new PgEmitter().Emit(new LockQuery("k"), ["k"]);
         Assert.Equal("SELECT pg_advisory_xact_lock(hashtext($1))", sql.Sql);
     }
 
@@ -41,7 +37,7 @@ public sealed class ExpectTests
     public void Version_column_missing_from_where_throws()
     {
         var table = new VersionedUsers();
-        var builder = new UpdateBuilder(table, new ParamBag())
+        var builder = new UpdateBuilder(table)
             .Set(table.Email, "x")
             .Where(table.Id, 1);
         var ex = Assert.Throws<InvalidOperationException>(() => builder.Build());
@@ -52,7 +48,7 @@ public sealed class ExpectTests
     public void Version_column_in_where_allows_build()
     {
         var table = new VersionedUsers();
-        var query = new UpdateBuilder(table, new ParamBag())
+        var query = new UpdateBuilder(table)
             .Set(table.Email, "x")
             .Where(table.Id, 1)
             .Where(table.RowVersion, 0)

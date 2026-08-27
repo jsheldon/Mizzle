@@ -4,5 +4,5 @@ namespace Mizzle.Compile;
 
 public interface ISqlEmitter
 {
-    CompiledSql Emit(Query query, ParamBag parameters);
+    CompiledSql Emit(Query query, IReadOnlyList<object?> values);
 }

@@ -9,8 +9,8 @@ public static class Sql
 
     public static BinaryExpr Eq(IColumn left, IColumn right) => new(BinaryOp.Eq, left.ToRef(), right.ToRef());
 
-    public static BinaryExpr Eq(ColumnRef column, object? value, ParamBag bag)
-        => new(BinaryOp.Eq, column, bag.Add(value, column.ClrType));
+    public static BinaryExpr Eq(ColumnRef column, object? value)
+        => new(BinaryOp.Eq, column, new ValueExpr(value, column.ClrType));
 
     public static BinaryExpr And(Expr left, Expr right) => new(BinaryOp.And, left, right);
 

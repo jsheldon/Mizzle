@@ -4,8 +4,7 @@ public sealed class QueryEqualityTests
 {
     private static SelectQuery Build()
     {
-        var bag = new ParamBag();
-        var p = bag.Add("a@b.com", typeof(string));
+        var p = new ParamRef(0, typeof(string));
         return new SelectQuery(
             Select: [new SelectItem(new ColumnRef("u", "email", typeof(string)), null)],
             From: new FromSource("users", "public", "u"),
@@ -42,8 +41,7 @@ public sealed class QueryEqualityTests
     {
         InsertQuery Make()
         {
-            var bag = new ParamBag();
-            var v = bag.Add("a@b.com", typeof(string));
+            var v = new ParamRef(0, typeof(string));
             return new InsertQuery(
                 Into: new FromSource("users", "public", "u"),
                 Columns: ["email"],

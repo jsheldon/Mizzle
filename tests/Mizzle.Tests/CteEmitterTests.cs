@@ -5,7 +5,7 @@ public sealed class CteEmitterTests
     [Fact]
     public void Recursive_cte_union_all()
     {
-        var sql = new PgEmitter().Emit(RecursiveOuter(), new ParamBag());
+        var sql = new PgEmitter().Emit(RecursiveOuter(), []);
         Assert.StartsWith("WITH RECURSIVE \"t\" AS (", sql.Sql, StringComparison.Ordinal);
         Assert.Contains("UNION ALL", sql.Sql, StringComparison.Ordinal);
     }
@@ -13,7 +13,7 @@ public sealed class CteEmitterTests
     [Fact]
     public void SqlServer_recursive_cte_emits_with()
     {
-        var sql = new SqlServerEmitter().Emit(RecursiveOuter(), new ParamBag());
+        var sql = new SqlServerEmitter().Emit(RecursiveOuter(), []);
         Assert.StartsWith("WITH [t] AS (", sql.Sql, StringComparison.Ordinal);
         Assert.Contains("UNION ALL", sql.Sql, StringComparison.Ordinal);
     }

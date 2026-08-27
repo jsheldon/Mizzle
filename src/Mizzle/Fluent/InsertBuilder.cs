@@ -15,14 +15,13 @@ public sealed class InsertBuilder
     private readonly SelectQuery? _fromSelect;
     private readonly EquatableList<SelectItem> _returning;
 
-    public InsertBuilder(ITable table, ParamBag parameters, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, parameters, executor, overlay, [], [], [], [], null, [])
+    public InsertBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
+        : this(table, executor, overlay, [], [], [], [], null, [])
     {
     }
 
     private InsertBuilder(
         ITable table,
-        ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
         EquatableList<string> columns,
@@ -33,7 +32,6 @@ public sealed class InsertBuilder
         EquatableList<SelectItem> returning)
     {
         _table = table;
-        Parameters = parameters;
         _executor = executor;
         Overlay = overlay;
         _columns = columns;
@@ -44,8 +42,6 @@ public sealed class InsertBuilder
         _returning = returning;
     }
 
-    public ParamBag Parameters { get; }
-
     public QueryOptions? Overlay { get; }
 
     public InsertBuilder Value(IColumn column, object? value)
@@ -55,9 +51,8 @@ public sealed class InsertBuilder
             throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
         }
 
-        var param = Parameters.Add(value, column.ClrType);
         return Copy(
-            currentRow: [.._currentRow, param],
+            currentRow: [.._currentRow, new ValueExpr(value, column.ClrType)],
             currentColumns: [.._currentColumns, column.Name]);
     }
 
@@ -133,12 +128,12 @@ public sealed class InsertBuilder
     }
 
     public Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
-        => Executor().ExecuteAsync(Build(), Parameters, Overlay, cancellationToken);
+        => Executor().ExecuteAsync(Build(), Overlay, cancellationToken);
 
     public Task<IReadOnlyList<T>> ToListAsync<T>(
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().QueryAsync(Build(), Parameters, map, Overlay, cancellationToken);
+        => Executor().QueryAsync(Build(), map, Overlay, cancellationToken);
 
     private IQueryExecutor Executor()
         => _executor ?? throw new InvalidOperationException("This query is not bound to a database.");
@@ -154,7 +149,6 @@ public sealed class InsertBuilder
         bool resetCurrent = false)
         => new(
             _table,
-            Parameters,
             _executor,
             overlay ?? Overlay,
             columns ?? _columns,

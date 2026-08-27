@@ -5,8 +5,7 @@ public sealed class WriteEmitterTests
     [Fact]
     public void Postgres_insert_returning()
     {
-        var bag = new ParamBag();
-        var v = bag.Add("a@b.com", typeof(string));
+        var v = new ParamRef(0, typeof(string));
         var q = new InsertQuery(
             Into: new FromSource("users", "public", "u"),
             Columns: ["email"],
@@ -15,7 +14,7 @@ public sealed class WriteEmitterTests
             Returning: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
             With: [],
             RecursiveWith: false);
-        var sql = new PgEmitter().Emit(q, bag);
+        var sql = new PgEmitter().Emit(q, ["a@b.com"]);
         Assert.Equal(
             "INSERT INTO \"public\".\"users\" (\"email\") VALUES ($1) RETURNING \"u\".\"id\"",
             sql.Sql);
@@ -24,8 +23,7 @@ public sealed class WriteEmitterTests
     [Fact]
     public void SqlServer_insert_output()
     {
-        var bag = new ParamBag();
-        var v = bag.Add("a@b.com", typeof(string));
+        var v = new ParamRef(0, typeof(string));
         var q = new InsertQuery(
             Into: new FromSource("users", "dbo", "u"),
             Columns: ["email"],
@@ -34,7 +32,7 @@ public sealed class WriteEmitterTests
             Returning: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
             With: [],
             RecursiveWith: false);
-        var sql = new SqlServerEmitter().Emit(q, bag);
+        var sql = new SqlServerEmitter().Emit(q, ["a@b.com"]);
         Assert.Equal(
             "INSERT INTO [dbo].[users] ([email]) OUTPUT INSERTED.[id] VALUES (@p0)",
             sql.Sql);
@@ -43,9 +41,8 @@ public sealed class WriteEmitterTests
     [Fact]
     public void Postgres_update_set_where()
     {
-        var bag = new ParamBag();
-        var email = bag.Add("b@c.com", typeof(string));
-        var id = bag.Add(1, typeof(int));
+        var email = new ParamRef(0, typeof(string));
+        var id = new ParamRef(1, typeof(int));
         var q = new UpdateQuery(
             Table: new FromSource("users", "public", "u"),
             Set: [("email", email)],
@@ -53,7 +50,7 @@ public sealed class WriteEmitterTests
             Returning: [],
             With: [],
             RecursiveWith: false);
-        var sql = new PgEmitter().Emit(q, bag);
+        var sql = new PgEmitter().Emit(q, ["b@c.com", 1]);
         Assert.Equal(
             "UPDATE \"public\".\"users\" AS \"u\" SET \"email\" = $1 WHERE \"u\".\"id\" = $2",
             sql.Sql);
@@ -62,9 +59,8 @@ public sealed class WriteEmitterTests
     [Fact]
     public void SqlServer_update_set_where()
     {
-        var bag = new ParamBag();
-        var email = bag.Add("b@c.com", typeof(string));
-        var id = bag.Add(1, typeof(int));
+        var email = new ParamRef(0, typeof(string));
+        var id = new ParamRef(1, typeof(int));
         var q = new UpdateQuery(
             Table: new FromSource("users", "dbo", "u"),
             Set: [("email", email)],
@@ -72,7 +68,7 @@ public sealed class WriteEmitterTests
             Returning: [],
             With: [],
             RecursiveWith: false);
-        var sql = new SqlServerEmitter().Emit(q, bag);
+        var sql = new SqlServerEmitter().Emit(q, ["b@c.com", 1]);
         Assert.Equal(
             "UPDATE [dbo].[users] SET [email] = @p0 WHERE [u].[id] = @p1",
             sql.Sql);
@@ -81,15 +77,14 @@ public sealed class WriteEmitterTests
     [Fact]
     public void Postgres_delete_where()
     {
-        var bag = new ParamBag();
-        var id = bag.Add(1, typeof(int));
+        var id = new ParamRef(0, typeof(int));
         var q = new DeleteQuery(
             From: new FromSource("users", "public", "u"),
             Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
             Returning: [],
             With: [],
             RecursiveWith: false);
-        var sql = new PgEmitter().Emit(q, bag);
+        var sql = new PgEmitter().Emit(q, [1]);
         Assert.Equal(
             "DELETE FROM \"public\".\"users\" AS \"u\" WHERE \"u\".\"id\" = $1",
             sql.Sql);
@@ -98,15 +93,14 @@ public sealed class WriteEmitterTests
     [Fact]
     public void SqlServer_delete_where()
     {
-        var bag = new ParamBag();
-        var id = bag.Add(1, typeof(int));
+        var id = new ParamRef(0, typeof(int));
         var q = new DeleteQuery(
             From: new FromSource("users", "dbo", "u"),
             Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
             Returning: [],
             With: [],
             RecursiveWith: false);
-        var sql = new SqlServerEmitter().Emit(q, bag);
+        var sql = new SqlServerEmitter().Emit(q, [1]);
         Assert.Equal(
             "DELETE FROM [dbo].[users] WHERE [u].[id] = @p0",
             sql.Sql);
@@ -126,7 +120,7 @@ public sealed class WriteEmitterTests
             Returning: [],
             With: [new CteClause("stale", cteBody)],
             RecursiveWith: false);
-        var sql = new PgEmitter().Emit(q, new ParamBag());
+        var sql = new PgEmitter().Emit(q, []);
         Assert.Equal(
             "WITH \"stale\" AS (SELECT \"u\".\"id\" FROM \"public\".\"users\" AS \"u\") DELETE FROM \"public\".\"users\" AS \"u\"",
             sql.Sql);
@@ -146,7 +140,7 @@ public sealed class WriteEmitterTests
             Returning: [],
             With: [new CteClause("stale", cteBody)],
             RecursiveWith: false);
-        var sql = new SqlServerEmitter().Emit(q, new ParamBag());
+        var sql = new SqlServerEmitter().Emit(q, []);
         Assert.Equal(
             "WITH [stale] AS (SELECT [u].[id] FROM [dbo].[users] AS [u]) DELETE FROM [dbo].[users]",
             sql.Sql);
@@ -169,7 +163,7 @@ public sealed class WriteEmitterTests
             Returning: [],
             With: [],
             RecursiveWith: false);
-        var sql = new PgEmitter().Emit(q, new ParamBag());
+        var sql = new PgEmitter().Emit(q, []);
         Assert.Equal(
             "INSERT INTO \"public\".\"users\" (\"email\") SELECT \"s\".\"email\" FROM \"public\".\"staging\" AS \"s\"",
             sql.Sql);
@@ -186,7 +180,7 @@ public sealed class WriteEmitterTests
             Returning: [new SelectItem(new ColumnRef("u", "id", typeof(int)), null)],
             With: [],
             RecursiveWith: false);
-        var sql = new SqlServerEmitter().Emit(q, new ParamBag());
+        var sql = new SqlServerEmitter().Emit(q, []);
         Assert.Equal(
             "INSERT INTO [dbo].[users] ([email]) OUTPUT INSERTED.[id] SELECT [s].[email] FROM [dbo].[staging] AS [s]",
             sql.Sql);
@@ -195,22 +189,20 @@ public sealed class WriteEmitterTests
     [Fact]
     public void Insert_with_values_and_select_throws()
     {
-        var bag = new ParamBag();
-        var v = bag.Add("x", typeof(string));
+        var v = new ParamRef(0, typeof(string));
         var q = new InsertQuery(
             Into: new FromSource("users", "public", "u"),
             Columns: ["email"],
             ValuesRows: [[v]],
             FromSelect: StagingSelect("public"),
             Returning: [], With: [], RecursiveWith: false);
-        Assert.Throws<InvalidOperationException>(() => new PgEmitter().Emit(q, bag));
+        Assert.Throws<InvalidOperationException>(() => new PgEmitter().Emit(q, ["x"]));
     }
 
     [Fact]
     public void Ilike_inside_from_select_throws_on_sql_server()
     {
-        var bag = new ParamBag();
-        var p = bag.Add("%x%", typeof(string));
+        var p = new ParamRef(0, typeof(string));
         var source = StagingSelect("dbo") with
         {
             Where = new BinaryExpr(BinaryOp.ILike, new ColumnRef("s", "email", typeof(string)), p)
@@ -221,7 +213,7 @@ public sealed class WriteEmitterTests
             ValuesRows: [],
             FromSelect: source,
             Returning: [], With: [], RecursiveWith: false);
-        var ex = Assert.Throws<UnsupportedFeatureException>(() => new SqlServerEmitter().Emit(q, bag));
+        var ex = Assert.Throws<UnsupportedFeatureException>(() => new SqlServerEmitter().Emit(q, ["%x%"]));
         Assert.Equal(Feature.ILike, ex.Feature);
     }
 }

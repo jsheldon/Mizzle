@@ -6,6 +6,10 @@ public sealed record ColumnRef(string TableAlias, string ColumnName, Type ClrTyp
 
 public sealed record ParamRef(int Slot, Type ClrType) : Expr;
 
+// A value captured at query-build time. Never reaches an emitter: the
+// parameterization pass replaces it with a ParamRef and extracts the value.
+public sealed record ValueExpr(object? Value, Type ClrType) : Expr;
+
 public sealed record BinaryExpr(BinaryOp Op, Expr Left, Expr Right) : Expr;
 
 public enum BinaryOp

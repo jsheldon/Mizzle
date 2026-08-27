@@ -6,23 +6,23 @@ file sealed class RowsExecutor : IQueryExecutor
 {
     public IReadOnlyList<string> Rows = [];
 
-    public Task<IReadOnlyList<T>> QueryAsync<T>(Query q, ParamBag b, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
+    public Task<IReadOnlyList<T>> QueryAsync<T>(Query q, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
         => Task.FromResult((IReadOnlyList<T>)(object)Rows);
 
-    public Task<int> ExecuteAsync(Query q, ParamBag b, QueryOptions? o, CancellationToken c)
+    public Task<int> ExecuteAsync(Query q, QueryOptions? o, CancellationToken c)
         => throw new NotSupportedException();
 
-    public IAsyncEnumerable<T> StreamAsync<T>(Query q, ParamBag b, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
+    public IAsyncEnumerable<T> StreamAsync<T>(Query q, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
         => throw new NotSupportedException();
 
-    public Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(string s, ParamBag b, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
+    public Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(string s, Query q, Func<DbDataReader, T> m, QueryOptions? o, CancellationToken c)
         => throw new NotSupportedException();
 }
 
 public sealed class OrDefaultTerminatorTests
 {
     private static SelectBuilder Builder(IQueryExecutor exec)
-        => new SelectBuilder(new ParamBag(), exec)
+        => new SelectBuilder(exec)
             .Select(new ColumnRef("u", "email", typeof(string)))
             .From(new FromSource("users", "public", "u"));
 

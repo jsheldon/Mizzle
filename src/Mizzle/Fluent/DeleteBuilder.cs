@@ -12,14 +12,13 @@ public sealed class DeleteBuilder
     private readonly EquatableList<SelectItem> _returning;
     private readonly int? _expect;
 
-    public DeleteBuilder(ITable table, ParamBag parameters, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, parameters, executor, overlay, null, [], null)
+    public DeleteBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
+        : this(table, executor, overlay, null, [], null)
     {
     }
 
     private DeleteBuilder(
         ITable table,
-        ParamBag parameters,
         IQueryExecutor? executor,
         QueryOptions? overlay,
         Expr? where,
@@ -27,7 +26,6 @@ public sealed class DeleteBuilder
         int? expect)
     {
         _table = table;
-        Parameters = parameters;
         _executor = executor;
         Overlay = overlay;
         _where = where;
@@ -35,18 +33,13 @@ public sealed class DeleteBuilder
         _expect = expect;
     }
 
-    public ParamBag Parameters { get; }
-
     public QueryOptions? Overlay { get; }
 
     public DeleteBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public DeleteBuilder Where(IColumn column, object? value)
-    {
-        var param = Parameters.Add(value, column.ClrType);
-        return Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), param));
-    }
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
 
     public DeleteBuilder Returning(params IColumn[] columns)
         => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
@@ -59,7 +52,7 @@ public sealed class DeleteBuilder
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
     {
-        var affected = await Executor().ExecuteAsync(Build(), Parameters, Overlay, cancellationToken);
+        var affected = await Executor().ExecuteAsync(Build(), Overlay, cancellationToken);
         if (_expect is int expected && affected != expected)
         {
             throw new ConcurrencyException(expected, affected);
@@ -71,7 +64,7 @@ public sealed class DeleteBuilder
     public Task<IReadOnlyList<T>> ToListAsync<T>(
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)
-        => Executor().QueryAsync(Build(), Parameters, map, Overlay, cancellationToken);
+        => Executor().QueryAsync(Build(), map, Overlay, cancellationToken);
 
     private IQueryExecutor Executor()
         => _executor ?? throw new InvalidOperationException("This query is not bound to a database.");
@@ -83,7 +76,6 @@ public sealed class DeleteBuilder
         QueryOptions? overlay = null)
         => new(
             _table,
-            Parameters,
             _executor,
             overlay ?? Overlay,
             where ?? _where,
