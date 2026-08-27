@@ -31,9 +31,45 @@ public abstract class Column<T> : IColumn, IBindableColumn
 
     public int? Length { get; private set; }
 
+    internal Type? StorageClrType { get; private set; }
+
+    internal Func<object?, object?>? WriteConverter { get; private set; }
+
+    internal void SetConverter(Type storageClrType, Func<object?, object?> write)
+    {
+        StorageClrType = storageClrType;
+        WriteConverter = write;
+    }
+
+    internal void CopyMetadataFrom(IColumn source)
+    {
+        IsVersion = source.IsVersion;
+        IsPrimaryKey = source.IsPrimaryKey;
+        IsRequired = source.IsRequired;
+        IsUnique = source.IsUnique;
+        HasDefault = source.HasDefault;
+        DefaultValue = source.DefaultValue;
+        ReferencedColumn = source.ReferencedColumn;
+        Length = source.Length;
+    }
+
+    public ValueExpr Bind(object? value)
+    {
+        if (WriteConverter is null)
+        {
+            return new ValueExpr(value, ClrType);
+        }
+
+        return new ValueExpr(value is null ? null : WriteConverter(value), StorageClrType!);
+    }
+
     protected void MarkVersion() => IsVersion = true;
 
-    protected void MarkPrimaryKey() => IsPrimaryKey = true;
+    protected void MarkPrimaryKey()
+    {
+        IsPrimaryKey = true;
+        IsRequired = true;
+    }
 
     protected void MarkNotNull() => IsRequired = true;
 
@@ -81,13 +117,13 @@ public abstract class Column<T> : IColumn, IBindableColumn
     public UnaryExpr IsNotNull() => new(UnaryOp.IsNotNull, ToRef());
 
     public InExpr In(params T[] values)
-        => new(ToRef(), [..values.Select(v => (Expr)new ValueExpr(v, typeof(T)))]);
+        => new(ToRef(), [..values.Select(v => (Expr)Bind(v))]);
 
     public BetweenExpr Between(T lo, T hi)
-        => new(ToRef(), new ValueExpr(lo, typeof(T)), new ValueExpr(hi, typeof(T)));
+        => new(ToRef(), Bind(lo), Bind(hi));
 
     private BinaryExpr Binary(BinaryOp op, T value)
-        => new(op, ToRef(), new ValueExpr(value, typeof(T)));
+        => new(op, ToRef(), Bind(value));
 
     private BinaryExpr Binary(BinaryOp op, Column<T> other)
         => new(op, ToRef(), other.ToRef());

@@ -2,11 +2,12 @@ namespace Mizzle.Generators.Tests;
 
 public sealed class TableFactsTests
 {
-    private static Microsoft.CodeAnalysis.INamedTypeSymbol GetSymbol(string source, string typeName)
+    private static (Microsoft.CodeAnalysis.INamedTypeSymbol Symbol, Microsoft.CodeAnalysis.Compilation Compilation) GetSymbol(string source, string typeName)
     {
         var compilation = GeneratorTestHost.Compile(source);
-        return compilation.GetTypeByMetadataName(typeName)
+        var symbol = compilation.GetTypeByMetadataName(typeName)
             ?? throw new InvalidOperationException($"Type {typeName} not found.");
+        return (symbol, compilation);
     }
 
     [Fact]
@@ -21,7 +22,8 @@ public sealed class TableFactsTests
                 public PgColumn<string> Email { get; } = Text("email").NotNull();
             }
             """;
-        var facts = TableFacts.FromSymbol(GetSymbol(source, "Users"));
+        var (symbol, compilation) = GetSymbol(source, "Users");
+        var facts = TableFacts.FromSymbol(symbol, compilation);
         Assert.NotNull(facts);
         Assert.Equal("users", facts!.TableName);
         Assert.Equal("public", facts.Schema);
@@ -54,7 +56,8 @@ public sealed class TableFactsTests
                 public PgColumn<string> Email { get; } = Text("email");
             }
             """;
-        var facts = TableFacts.FromSymbol(GetSymbol(source, "Users"));
+        var (symbol, compilation) = GetSymbol(source, "Users");
+        var facts = TableFacts.FromSymbol(symbol, compilation);
         Assert.NotNull(facts);
         Assert.Null(facts!.Schema);
         Assert.Equal("users", facts.Alias);
@@ -72,7 +75,8 @@ public sealed class TableFactsTests
                 public PgColumn<string> Email { get; } = Text("email");
             }
             """;
-        Assert.Null(TableFacts.FromSymbol(GetSymbol(source, "Users")));
+        var (symbol, compilation) = GetSymbol(source, "Users");
+        Assert.Null(TableFacts.FromSymbol(symbol, compilation));
     }
 
     [Fact]
@@ -86,7 +90,8 @@ public sealed class TableFactsTests
                 public SqlColumn<string> Email { get; } = NVarChar("email", 255);
             }
             """;
-        var facts = TableFacts.FromSymbol(GetSymbol(source, "Users"));
+        var (symbol, compilation) = GetSymbol(source, "Users");
+        var facts = TableFacts.FromSymbol(symbol, compilation);
         Assert.NotNull(facts);
         Assert.False(facts!.IsPostgres);
         Assert.Equal("email", facts.Columns[0].DbName);

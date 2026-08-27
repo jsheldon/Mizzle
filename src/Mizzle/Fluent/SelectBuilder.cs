@@ -72,7 +72,7 @@ public sealed class SelectBuilder
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public SelectBuilder Where(IColumn column, object? value)
-        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     public SelectBuilder Where(params Expr[] conditions)
         => conditions.Length switch

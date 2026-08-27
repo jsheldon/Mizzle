@@ -49,4 +49,16 @@ public sealed class PgColumn<T> : Column<T>
         SetLength(length);
         return this;
     }
+
+    // Converts a legacy storage representation to a domain type. Both
+    // arguments must be static method references so the source generators
+    // can bake the read conversion into generated mappers.
+    public PgColumn<TResult> Map<TResult>(Func<T, TResult> read, Func<TResult, T> write)
+    {
+        _ = read; // generator-facing; runtime reads use generated or hand-written mappers
+        var column = new PgColumn<TResult>(Name);
+        column.CopyMetadataFrom(this);
+        column.SetConverter(typeof(T), value => write((TResult)value!));
+        return column;
+    }
 }

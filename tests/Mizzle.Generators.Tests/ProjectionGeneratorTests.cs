@@ -9,20 +9,20 @@ public sealed class ProjectionGeneratorTests
 
         namespace Demo;
 
-        public sealed class Persons : PgTable<Persons>
+        public sealed class Authors : PgTable<Authors>
         {
-            public Persons() : base("person", "public", "a") { }
-            public PgColumn<System.Guid> PersonId { get; } = Uuid("person_id").PrimaryKey();
-            public PgColumn<System.Guid> LanguageId { get; } = Uuid("language_id");
-            public PgColumn<string> FirstName { get; } = Text("first_name").NotNull();
+            public Authors() : base("authors", "public", "a") { }
+            public PgColumn<System.Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
+            public PgColumn<System.Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
+            public PgColumn<string> DisplayName { get; } = Text("display_name").NotNull();
         }
 
-        public sealed class MstrLists : PgTable<MstrLists>
+        public sealed class Tags : PgTable<Tags>
         {
-            public MstrLists() : base("mstr_lists", "public", "c") { }
-            public PgColumn<System.Guid> ItemId { get; } = Uuid("mstr_list_item_id").PrimaryKey();
-            public PgColumn<string> ItemDesc { get; } = Text("mstr_list_item_desc").NotNull();
-            public PgColumn<string> ListType { get; } = Text("mstr_list_type").NotNull();
+            public Tags() : base("tags", "public", "t") { }
+            public PgColumn<System.Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
+            public PgColumn<string> Label { get; } = Text("label").NotNull();
+            public PgColumn<string> Kind { get; } = Text("kind").NotNull();
         }
         """;
 
@@ -37,13 +37,13 @@ public sealed class ProjectionGeneratorTests
         {
             public static async Task Run(PostgresDb db, System.Guid id)
             {
-                var a = new Persons();
-                var c = new MstrLists();
-                var rows = await db.Select(a.PersonId, a.FirstName, c.ItemDesc)
+                var a = new Authors();
+                var t = new Tags();
+                var rows = await db.Select(a.AuthorId, a.DisplayName, t.Label)
                     .From(a)
-                    .LeftJoin(c).On(a.LanguageId.Eq(c.ItemId), c.ListType.Eq("language"))
-                    .Where(a.PersonId.Eq(id))
-                    .ToListAsync<PatientProfileRow>();
+                    .LeftJoin(t).On(a.FavoriteTagId.Eq(t.TagId), t.Kind.Eq("topic"))
+                    .Where(a.AuthorId.Eq(id))
+                    .ToListAsync<AuthorTagRow>();
             }
         }
         """;
@@ -52,11 +52,11 @@ public sealed class ProjectionGeneratorTests
     public void Generate_mode_declares_record_with_left_join_nullability()
     {
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, GenerateModeCallSite));
-        Assert.Contains("public sealed record PatientProfileRow(", generated, StringComparison.Ordinal);
-        Assert.Contains("global::System.Guid PersonId", generated, StringComparison.Ordinal);
-        Assert.Contains("string FirstName", generated, StringComparison.Ordinal);
-        // ItemDesc is NotNull on its table, but the LeftJoin makes it nullable.
-        Assert.Contains("string? ItemDesc", generated, StringComparison.Ordinal);
+        Assert.Contains("public sealed record AuthorTagRow(", generated, StringComparison.Ordinal);
+        Assert.Contains("global::System.Guid AuthorId", generated, StringComparison.Ordinal);
+        Assert.Contains("string DisplayName", generated, StringComparison.Ordinal);
+        // Label is NotNull on its table, but the LeftJoin makes it nullable.
+        Assert.Contains("string? Label", generated, StringComparison.Ordinal);
         Assert.Contains("InterceptsLocation", generated, StringComparison.Ordinal);
         Assert.Contains("ToListPrecompiledAsync", generated, StringComparison.Ordinal);
         Assert.Contains("r.GetGuid(0)", generated, StringComparison.Ordinal);
@@ -70,7 +70,7 @@ public sealed class ProjectionGeneratorTests
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
     }
 
-    private static string MapModeCallSite(string typeName, string select = "a.PersonId, a.FirstName, c.ItemDesc") => $$"""
+    private static string MapModeCallSite(string typeName, string select = "a.AuthorId, a.DisplayName, t.Label") => $$"""
         using System.Threading.Tasks;
         using Mizzle.Fluent;
         using Mizzle.Postgres;
@@ -81,12 +81,12 @@ public sealed class ProjectionGeneratorTests
         {
             public static async Task Run(PostgresDb db, System.Guid id)
             {
-                var a = new Persons();
-                var c = new MstrLists();
+                var a = new Authors();
+                var t = new Tags();
                 var rows = await db.Select({{select}})
                     .From(a)
-                    .LeftJoin(c).On(a.LanguageId.Eq(c.ItemId), c.ListType.Eq("language"))
-                    .Where(a.PersonId.Eq(id))
+                    .LeftJoin(t).On(a.FavoriteTagId.Eq(t.TagId), t.Kind.Eq("topic"))
+                    .Where(a.AuthorId.Eq(id))
                     .ToListAsync<{{typeName}}>();
             }
         }
@@ -98,18 +98,18 @@ public sealed class ProjectionGeneratorTests
         const string poco = """
             namespace Demo;
 
-            public sealed class ProfileRow
+            public sealed class AuthorRow
             {
-                public System.Guid person_id { get; set; }
-                public string first_name { get; set; } = "";
-                public string? item_desc { get; set; }
+                public System.Guid author_id { get; set; }
+                public string display_name { get; set; } = "";
+                public string? label { get; set; }
             }
             """;
-        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, poco, MapModeCallSite("ProfileRow"));
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, poco, MapModeCallSite("AuthorRow"));
         Assert.DoesNotContain(result.Diagnostics, d => d.Id.StartsWith("MIZ", StringComparison.Ordinal));
         var generated = GeneratorTestHost.Generated(result);
-        Assert.Contains("person_id = r.GetGuid(0)", generated, StringComparison.Ordinal);
-        Assert.Contains("item_desc = r.IsDBNull(2) ? (string?)null : r.GetString(2)", generated, StringComparison.Ordinal);
+        Assert.Contains("author_id = r.GetGuid(0)", generated, StringComparison.Ordinal);
+        Assert.Contains("label = r.IsDBNull(2) ? (string?)null : r.GetString(2)", generated, StringComparison.Ordinal);
         Assert.Contains("InterceptsLocation", generated, StringComparison.Ordinal);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
     }
@@ -120,13 +120,13 @@ public sealed class ProjectionGeneratorTests
         const string record = """
             namespace Demo;
 
-            public sealed record Slim(System.Guid PersonId, string? ItemDesc);
+            public sealed record Slim(System.Guid AuthorId, string? Label);
             """;
         var (result, diagnostics) = GeneratorTestHost.RunAndCompile(
-            Tables, record, MapModeCallSite("Slim", "a.PersonId, c.ItemDesc"));
+            Tables, record, MapModeCallSite("Slim", "a.AuthorId, t.Label"));
         Assert.DoesNotContain(result.Diagnostics, d => d.Id.StartsWith("MIZ", StringComparison.Ordinal));
         var generated = GeneratorTestHost.Generated(result);
-        Assert.Contains("PersonId: r.GetGuid(0)", generated, StringComparison.Ordinal);
+        Assert.Contains("AuthorId: r.GetGuid(0)", generated, StringComparison.Ordinal);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
     }
 
@@ -138,7 +138,7 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class Sparse
             {
-                public System.Guid person_id { get; set; }
+                public System.Guid author_id { get; set; }
             }
             """;
         var result = GeneratorTestHost.Run(Tables, target, MapModeCallSite("Sparse"));
@@ -151,7 +151,7 @@ public sealed class ProjectionGeneratorTests
         const string target = """
             namespace Demo;
 
-            public sealed record Demanding(System.Guid PersonId, string FirstName, string? ItemDesc, string Missing);
+            public sealed record Demanding(System.Guid AuthorId, string DisplayName, string? Label, string Missing);
             """;
         var result = GeneratorTestHost.Run(Tables, target, MapModeCallSite("Demanding"));
         Assert.Contains(result.Diagnostics, d => d.Id == "MIZ004");
@@ -165,9 +165,9 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class Strict
             {
-                public System.Guid person_id { get; set; }
-                public string first_name { get; set; } = "";
-                public string item_desc { get; set; } = "";
+                public System.Guid author_id { get; set; }
+                public string display_name { get; set; } = "";
+                public string label { get; set; } = "";
             }
             """;
         var result = GeneratorTestHost.Run(Tables, target, MapModeCallSite("Strict"));
@@ -182,10 +182,10 @@ public sealed class ProjectionGeneratorTests
 
             public sealed class Ambiguous
             {
-                public System.Guid person_id { get; set; }
-                public string? first_name { get; set; }
-                public string? ItemDesc { get; set; }
-                public string? item_desc { get; set; }
+                public System.Guid author_id { get; set; }
+                public string? display_name { get; set; }
+                public string? Label { get; set; }
+                public string? label { get; set; }
             }
             """;
         var result = GeneratorTestHost.Run(Tables, target, MapModeCallSite("Ambiguous"));
@@ -206,12 +206,12 @@ public sealed class ProjectionGeneratorTests
             {
                 public static async Task Run(PostgresDb db, System.Guid id)
                 {
-                    var a = new Persons();
-                    _ = await db.Select(a.PersonId, a.FirstName).From(a).Where(a.PersonId.Eq(id)).ToListAsync<R1>();
-                    _ = await db.Select(a.PersonId, a.FirstName).From(a).Where(a.PersonId.Eq(id)).FirstAsync<R1>();
-                    _ = await db.Select(a.PersonId, a.FirstName).From(a).Where(a.PersonId.Eq(id)).FirstOrDefaultAsync<R1>();
-                    _ = await db.Select(a.PersonId, a.FirstName).From(a).Where(a.PersonId.Eq(id)).SingleAsync<R1>();
-                    _ = await db.Select(a.PersonId, a.FirstName).From(a).Where(a.PersonId.Eq(id)).SingleOrDefaultAsync<R1>();
+                    var a = new Authors();
+                    _ = await db.Select(a.AuthorId, a.DisplayName).From(a).Where(a.AuthorId.Eq(id)).ToListAsync<R1>();
+                    _ = await db.Select(a.AuthorId, a.DisplayName).From(a).Where(a.AuthorId.Eq(id)).FirstAsync<R1>();
+                    _ = await db.Select(a.AuthorId, a.DisplayName).From(a).Where(a.AuthorId.Eq(id)).FirstOrDefaultAsync<R1>();
+                    _ = await db.Select(a.AuthorId, a.DisplayName).From(a).Where(a.AuthorId.Eq(id)).SingleAsync<R1>();
+                    _ = await db.Select(a.AuthorId, a.DisplayName).From(a).Where(a.AuthorId.Eq(id)).SingleOrDefaultAsync<R1>();
                 }
             }
             """;
@@ -222,6 +222,56 @@ public sealed class ProjectionGeneratorTests
         Assert.Contains("FirstOrDefaultProjected", generated, StringComparison.Ordinal);
         Assert.Contains("SingleProjected", generated, StringComparison.Ordinal);
         Assert.Contains("SingleOrDefaultProjected", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void Projections_bake_converter_reads_for_mapped_columns()
+    {
+        const string converters = """
+            namespace Demo;
+
+            public static class EhrConvert
+            {
+                public static System.Guid ToGuid(string value) => System.Guid.Parse(value);
+                public static string FromGuid(System.Guid value) => value.ToString("D");
+            }
+            """;
+        const string table = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
+                public SqlColumn<string> FirstName { get; } = VarChar("first_name", 50).NotNull();
+            }
+            """;
+        const string site = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public static class LegacyQ
+            {
+                public static async Task Run(SqlDb db, System.Guid id)
+                {
+                    var a = new LegacyPersons();
+                    var rows = await db.Select(a.PersonId, a.FirstName)
+                        .From(a)
+                        .Where(a.PersonId.Eq(id))
+                        .ToListAsync<LegacyRow>();
+                }
+            }
+            """;
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(converters, table, site);
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("global::System.Guid PersonId", generated, StringComparison.Ordinal);
+        Assert.Contains("global::Demo.EhrConvert.ToGuid(r.GetString(0))", generated, StringComparison.Ordinal);
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
     }
 

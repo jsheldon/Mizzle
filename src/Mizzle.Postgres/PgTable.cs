@@ -27,4 +27,8 @@ public abstract class PgTable<TSelf> : Table<TSelf>
     protected static PgColumn<long> BigInt(string name) => new(name);
 
     protected static PgColumn<Guid> Uuid(string name) => new(name);
+
+    protected static PgColumn<string> Char(string name, int length) => new PgColumn<string>(name).WithLength(length);
+
+    protected static PgColumn<DateOnly> Date(string name) => new(name);
 }

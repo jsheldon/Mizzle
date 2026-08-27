@@ -33,10 +33,10 @@ public sealed class SchemaGeneratorTests
 
             namespace Demo;
 
-            public sealed class Persons : SqlTable<Persons>
+            public sealed class Documents : SqlTable<Documents>
             {
-                public Persons() : base("person", alias: "a") { }
-                public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").PrimaryKey();
+                public Documents() : base("documents", alias: "d") { }
+                public SqlColumn<System.Guid> DocumentId { get; } = UniqueIdentifier("document_id").PrimaryKey();
             }
             """;
 
@@ -73,21 +73,21 @@ public sealed class SchemaGeneratorTests
 
             namespace Demo;
 
-            public sealed class Persons : SqlTable<Persons>
+            public sealed class Books : SqlTable<Books>
             {
-                public Persons() : base("person", alias: "a") { }
-                public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").PrimaryKey();
-                public SqlColumn<string> MiddleName { get; } = NVarCharMax("middle_name");
-                public SqlColumn<System.Guid> LanguageId { get; } = UniqueIdentifier("language_id");
+                public Books() : base("books", alias: "b") { }
+                public SqlColumn<System.Guid> BookId { get; } = UniqueIdentifier("book_id").PrimaryKey();
+                public SqlColumn<string> Subtitle { get; } = NVarCharMax("subtitle");
+                public SqlColumn<System.Guid> PublisherId { get; } = UniqueIdentifier("publisher_id");
             }
             """;
 
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(source));
         // Nullable record members for unannotated columns
-        Assert.Contains("string? MiddleName", generated, StringComparison.Ordinal);
-        Assert.Contains("System.Guid? LanguageId", generated, StringComparison.Ordinal);
+        Assert.Contains("string? Subtitle", generated, StringComparison.Ordinal);
+        Assert.Contains("System.Guid? PublisherId", generated, StringComparison.Ordinal);
         // Non-nullable for PrimaryKey
-        Assert.Contains("System.Guid PersonId", generated, StringComparison.Ordinal);
+        Assert.Contains("System.Guid BookId", generated, StringComparison.Ordinal);
         // Guarded reads for nullable columns, direct read for required
         Assert.Contains("r.IsDBNull(1) ? (string?)null : r.GetString(1)", generated, StringComparison.Ordinal);
         Assert.Contains("r.IsDBNull(2) ? (global::System.Guid?)null : r.GetGuid(2)", generated, StringComparison.Ordinal);
@@ -112,6 +112,64 @@ public sealed class SchemaGeneratorTests
 
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(source));
         Assert.Contains("record NewUser(string Email)", generated, StringComparison.Ordinal);
+    }
+
+    private const string ConverterSource = """
+        namespace Demo;
+
+        public static class EhrConvert
+        {
+            public static System.Guid ToGuid(string value) => System.Guid.Parse(value);
+            public static string FromGuid(System.Guid value) => value.ToString("D");
+            public static System.DateOnly ToDate(string value) => System.DateOnly.ParseExact(value, "yyyyMMdd");
+            public static string FromDate(System.DateOnly value) => value.ToString("yyyyMMdd");
+        }
+        """;
+
+    [Fact]
+    public void Mapped_columns_generate_domain_types_and_converter_reads()
+    {
+        const string source = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(EhrConvert.ToGuid, EhrConvert.FromGuid).PrimaryKey();
+                public SqlColumn<System.DateOnly> DateOfBirth { get; } = Char("date_of_birth", 8).Map(EhrConvert.ToDate, EhrConvert.FromDate);
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(ConverterSource, source));
+        // Domain-typed record members
+        Assert.Contains("global::System.Guid PersonId", generated, StringComparison.Ordinal);
+        Assert.Contains("global::System.DateOnly? DateOfBirth", generated, StringComparison.Ordinal);
+        // Converter wrapped around the storage reader
+        Assert.Contains("global::Demo.EhrConvert.ToGuid(r.GetString(0))", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "r.IsDBNull(1) ? (global::System.DateOnly?)null : global::Demo.EhrConvert.ToDate(r.GetString(1))",
+            generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Lambda_converter_reports_MIZ008()
+    {
+        const string source = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class LegacyPersons : SqlTable<LegacyPersons>
+            {
+                public LegacyPersons() : base("person", "dbo", "a") { }
+                public SqlColumn<System.Guid> PersonId { get; } = Char("person_id", 36).Map(s => System.Guid.Parse(s), g => g.ToString());
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(source);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ008");
     }
 
     [Fact]

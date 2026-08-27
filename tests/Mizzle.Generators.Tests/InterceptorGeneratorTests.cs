@@ -44,21 +44,21 @@ public sealed class InterceptorGeneratorTests
 
         namespace Demo;
 
-        public sealed class Persons : PgTable<Persons>
+        public sealed class Authors : PgTable<Authors>
         {
-            public Persons() : base("person", "public", "a") { }
-            public PgColumn<System.Guid> PersonId { get; } = Uuid("person_id").PrimaryKey();
-            public PgColumn<System.Guid> LanguageId { get; } = Uuid("language_id");
-            public PgColumn<string> FirstName { get; } = Text("first_name").NotNull();
-            public PgColumn<System.Guid> PracticeId { get; } = Uuid("practice_id").NotNull();
+            public Authors() : base("authors", "public", "a") { }
+            public PgColumn<System.Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
+            public PgColumn<System.Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
+            public PgColumn<string> DisplayName { get; } = Text("display_name").NotNull();
+            public PgColumn<System.Guid> BlogId { get; } = Uuid("blog_id").NotNull();
         }
 
-        public sealed class MstrLists : PgTable<MstrLists>
+        public sealed class Tags : PgTable<Tags>
         {
-            public MstrLists() : base("mstr_lists", "public", "c") { }
-            public PgColumn<System.Guid> ItemId { get; } = Uuid("mstr_list_item_id").PrimaryKey();
-            public PgColumn<string> ItemDesc { get; } = Text("mstr_list_item_desc");
-            public PgColumn<string> ListType { get; } = Text("mstr_list_type").NotNull();
+            public Tags() : base("tags", "public", "t") { }
+            public PgColumn<System.Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
+            public PgColumn<string> Label { get; } = Text("label");
+            public PgColumn<string> Kind { get; } = Text("kind").NotNull();
         }
         """;
 
@@ -71,15 +71,15 @@ public sealed class InterceptorGeneratorTests
 
         public static class JoinedQ
         {
-            public static async Task Run(PostgresDb db, System.Guid id, System.Guid practice)
+            public static async Task Run(PostgresDb db, System.Guid id, System.Guid blog)
             {
-                var a = new Persons();
-                var c = new MstrLists();
-                _ = await db.Select(a.FirstName, c.ItemDesc)
+                var a = new Authors();
+                var t = new Tags();
+                _ = await db.Select(a.DisplayName, t.Label)
                     .From(a)
-                    .LeftJoin(c).On(a.LanguageId.Eq(c.ItemId), c.ListType.Eq("language"))
-                    .Where(a.PersonId.Eq(id))
-                    .Where(a.PracticeId.Eq(practice))
+                    .LeftJoin(t).On(a.FavoriteTagId.Eq(t.TagId), t.Kind.Eq("topic"))
+                    .Where(a.AuthorId.Eq(id))
+                    .Where(a.BlogId.Eq(blog))
                     .ToListAsync(static r => r.GetString(0));
             }
         }
@@ -87,35 +87,35 @@ public sealed class InterceptorGeneratorTests
 
     private static string JoinedRuntimeSql()
     {
-        var personId = new Mizzle.Ir.ColumnRef("a", "person_id", typeof(Guid));
-        var practiceId = new Mizzle.Ir.ColumnRef("a", "practice_id", typeof(Guid));
+        var authorId = new Mizzle.Ir.ColumnRef("a", "author_id", typeof(Guid));
+        var blogId = new Mizzle.Ir.ColumnRef("a", "blog_id", typeof(Guid));
         var ir = new Mizzle.Ir.SelectQuery(
             Select:
             [
-                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("a", "first_name", typeof(string)), null),
-                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("c", "mstr_list_item_desc", typeof(string)), null)
+                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("a", "display_name", typeof(string)), null),
+                new Mizzle.Ir.SelectItem(new Mizzle.Ir.ColumnRef("t", "label", typeof(string)), null)
             ],
-            From: new Mizzle.Ir.FromSource("person", "public", "a"),
+            From: new Mizzle.Ir.FromSource("authors", "public", "a"),
             Joins:
             [
                 new Mizzle.Ir.JoinClause(
                     Mizzle.Ir.JoinKind.Left,
-                    new Mizzle.Ir.FromSource("mstr_lists", "public", "c"),
+                    new Mizzle.Ir.FromSource("tags", "public", "t"),
                     new Mizzle.Ir.BinaryExpr(
                         Mizzle.Ir.BinaryOp.And,
                         new Mizzle.Ir.BinaryExpr(
                             Mizzle.Ir.BinaryOp.Eq,
-                            new Mizzle.Ir.ColumnRef("a", "language_id", typeof(Guid)),
-                            new Mizzle.Ir.ColumnRef("c", "mstr_list_item_id", typeof(Guid))),
+                            new Mizzle.Ir.ColumnRef("a", "favorite_tag_id", typeof(Guid)),
+                            new Mizzle.Ir.ColumnRef("t", "tag_id", typeof(Guid))),
                         new Mizzle.Ir.BinaryExpr(
                             Mizzle.Ir.BinaryOp.Eq,
-                            new Mizzle.Ir.ColumnRef("c", "mstr_list_type", typeof(string)),
-                            new Mizzle.Ir.ValueExpr("language", typeof(string)))))
+                            new Mizzle.Ir.ColumnRef("t", "kind", typeof(string)),
+                            new Mizzle.Ir.ValueExpr("topic", typeof(string)))))
             ],
             Where: new Mizzle.Ir.BinaryExpr(
                 Mizzle.Ir.BinaryOp.And,
-                new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, personId, new Mizzle.Ir.ValueExpr(Guid.Empty, typeof(Guid))),
-                new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, practiceId, new Mizzle.Ir.ValueExpr(Guid.Empty, typeof(Guid)))),
+                new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, authorId, new Mizzle.Ir.ValueExpr(Guid.Empty, typeof(Guid))),
+                new Mizzle.Ir.BinaryExpr(Mizzle.Ir.BinaryOp.Eq, blogId, new Mizzle.Ir.ValueExpr(Guid.Empty, typeof(Guid)))),
             OrderBy: [], Limit: null, Offset: null, Distinct: false,
             With: [], RecursiveWith: false, UnionAll: []);
         var (canonical, values) = Mizzle.Compile.Parameterizer.Run(ir);
@@ -144,8 +144,8 @@ public sealed class InterceptorGeneratorTests
             {
                 public static async Task Run(PostgresDb db)
                 {
-                    var a = new Persons();
-                    _ = await db.Select(a.FirstName).From(a).Where(a.FirstName.Gt("m"))
+                    var a = new Authors();
+                    _ = await db.Select(a.DisplayName).From(a).Where(a.DisplayName.Gt("m"))
                         .ToListAsync(static r => r.GetString(0));
                 }
             }

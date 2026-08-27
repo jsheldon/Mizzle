@@ -52,7 +52,7 @@ public sealed class InsertBuilder
         }
 
         return Copy(
-            currentRow: [.._currentRow, new ValueExpr(value, column.ClrType)],
+            currentRow: [.._currentRow, column.Bind(value)],
             currentColumns: [.._currentColumns, column.Name]);
     }
 

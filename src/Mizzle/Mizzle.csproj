@@ -9,4 +9,9 @@
     <IsPackable>true</IsPackable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mizzle.Postgres" />
+    <InternalsVisibleTo Include="Mizzle.SqlServer" />
+  </ItemGroup>
+
 </Project>

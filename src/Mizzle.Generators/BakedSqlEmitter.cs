@@ -4,7 +4,7 @@ namespace Mizzle.Generators;
 
 internal sealed class BakedColumn
 {
-    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall)
+    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null)
     {
         TableAlias = tableAlias;
         DbName = dbName;
@@ -12,6 +12,7 @@ internal sealed class BakedColumn
         ClrTypeName = clrTypeName;
         IsRequired = isRequired;
         ReaderCall = readerCall;
+        ReadConverter = readConverter;
     }
 
     public string TableAlias { get; }
@@ -20,6 +21,7 @@ internal sealed class BakedColumn
     public string ClrTypeName { get; }
     public bool IsRequired { get; }
     public string ReaderCall { get; }
+    public string? ReadConverter { get; }
 }
 
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).

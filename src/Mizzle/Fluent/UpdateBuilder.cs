@@ -38,13 +38,13 @@ public sealed class UpdateBuilder
     public QueryOptions? Overlay { get; }
 
     public UpdateBuilder Set(IColumn column, object? value)
-        => Copy(set: [.._set, (column.Name, (Expr)new ValueExpr(value, column.ClrType))]);
+        => Copy(set: [.._set, (column.Name, (Expr)column.Bind(value))]);
 
     public UpdateBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public UpdateBuilder Where(IColumn column, object? value)
-        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     public UpdateBuilder Returning(params IColumn[] columns)
         => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);

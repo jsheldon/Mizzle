@@ -458,9 +458,14 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         => ReadExpression(column, ordinal);
 
     private static string ReadExpression(BakedColumn column, int ordinal)
-        => column.IsRequired
+    {
+        var read = column.ReadConverter is null
             ? $"r.{column.ReaderCall}({ordinal})"
-            : $"r.IsDBNull({ordinal}) ? ({column.ClrTypeName}?)null : r.{column.ReaderCall}({ordinal})";
+            : $"{column.ReadConverter}(r.{column.ReaderCall}({ordinal}))";
+        return column.IsRequired
+            ? read
+            : $"r.IsDBNull({ordinal}) ? ({column.ClrTypeName}?)null : {read}";
+    }
 
     private static string GeneratedMapperName(string typeName) => typeName + "ProjectionMapper";
 

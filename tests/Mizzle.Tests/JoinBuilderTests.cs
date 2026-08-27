@@ -1,19 +1,19 @@
 namespace Mizzle.Tests;
 
-file sealed class Persons : PgTable<Persons>
+file sealed class Authors : PgTable<Authors>
 {
-    public Persons() : base("person", alias: "a") { }
-    public PgColumn<Guid> PersonId { get; } = Uuid("person_id").PrimaryKey();
-    public PgColumn<Guid> LanguageId { get; } = Uuid("language_id");
-    public PgColumn<string> FirstName { get; } = Text("first_name").NotNull();
+    public Authors() : base("authors", alias: "a") { }
+    public PgColumn<Guid> AuthorId { get; } = Uuid("author_id").PrimaryKey();
+    public PgColumn<Guid> FavoriteTagId { get; } = Uuid("favorite_tag_id");
+    public PgColumn<string> DisplayName { get; } = Text("display_name").NotNull();
 }
 
-file sealed class MstrLists : PgTable<MstrLists>
+file sealed class Tags : PgTable<Tags>
 {
-    public MstrLists() : base("mstr_lists", alias: "c") { }
-    public PgColumn<Guid> ItemId { get; } = Uuid("mstr_list_item_id").PrimaryKey();
-    public PgColumn<string> ItemDesc { get; } = Text("mstr_list_item_desc");
-    public PgColumn<string> ListType { get; } = Text("mstr_list_type").NotNull();
+    public Tags() : base("tags", alias: "t") { }
+    public PgColumn<Guid> TagId { get; } = Uuid("tag_id").PrimaryKey();
+    public PgColumn<string> Label { get; } = Text("label");
+    public PgColumn<string> Kind { get; } = Text("kind").NotNull();
 }
 
 public sealed class JoinBuilderTests
@@ -21,35 +21,35 @@ public sealed class JoinBuilderTests
     [Fact]
     public void Fluent_left_join_with_constant_condition()
     {
-        var a = new Persons();
-        var c = new MstrLists();
+        var authors = new Authors();
+        var tags = new Tags();
         var built = new SelectBuilder()
-            .Select(a.FirstName, c.ItemDesc)
-            .From(a)
-            .LeftJoin(c).On(a.LanguageId.Eq(c.ItemId), c.ListType.Eq("language"))
-            .Where(a.PersonId.Eq(Guid.Empty))
-            .OrderBy(a.FirstName)
+            .Select(authors.DisplayName, tags.Label)
+            .From(authors)
+            .LeftJoin(tags).On(authors.FavoriteTagId.Eq(tags.TagId), tags.Kind.Eq("topic"))
+            .Where(authors.AuthorId.Eq(Guid.Empty))
+            .OrderBy(authors.DisplayName)
             .Build();
 
         var (canonical, values) = Parameterizer.Run(built);
         var sql = new PgEmitter().Emit(canonical, values).Sql;
         Assert.Equal(
-            "SELECT \"a\".\"first_name\", \"c\".\"mstr_list_item_desc\" FROM \"person\" AS \"a\" LEFT JOIN \"mstr_lists\" AS \"c\" ON (\"a\".\"language_id\" = \"c\".\"mstr_list_item_id\" AND \"c\".\"mstr_list_type\" = $1) WHERE \"a\".\"person_id\" = $2 ORDER BY \"a\".\"first_name\"",
+            "SELECT \"a\".\"display_name\", \"t\".\"label\" FROM \"authors\" AS \"a\" LEFT JOIN \"tags\" AS \"t\" ON (\"a\".\"favorite_tag_id\" = \"t\".\"tag_id\" AND \"t\".\"kind\" = $1) WHERE \"a\".\"author_id\" = $2 ORDER BY \"a\".\"display_name\"",
             sql);
-        Assert.Equal(["language", Guid.Empty], values);
+        Assert.Equal(["topic", Guid.Empty], values);
     }
 
     [Fact]
     public void OrderByDesc_column_overload()
     {
-        var a = new Persons();
+        var a = new Authors();
         var built = new SelectBuilder()
-            .Select(a.FirstName)
+            .Select(a.DisplayName)
             .From(a)
-            .OrderByDesc(a.FirstName)
+            .OrderByDesc(a.DisplayName)
             .Build();
         var item = Assert.Single(built.OrderBy);
         Assert.True(item.Descending);
-        Assert.Equal(new ColumnRef("a", "first_name", typeof(string)), item.Expr);
+        Assert.Equal(new ColumnRef("a", "display_name", typeof(string)), item.Expr);
     }
 }

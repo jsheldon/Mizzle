@@ -51,7 +51,7 @@ public sealed class SchemaTests
         Assert.True(users.Id.IsPrimaryKey);
         Assert.True(users.Email.IsRequired);
         Assert.True(users.Email.IsUnique);
-        Assert.False(users.Id.IsRequired);
+        Assert.True(users.Id.IsRequired); // PrimaryKey implies required
     }
 
     [Fact]

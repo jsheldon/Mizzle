@@ -183,7 +183,7 @@ internal static class BakedChainWalker
         var leftAliases = new HashSet<string>(state.Joins.Where(j => j.IsLeft).Select(j => j.Table.Alias));
         var select = state.Select
             .Select(c => leftAliases.Contains(c.TableAlias)
-                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall)
+                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall, c.ReadConverter)
                 : c)
             .ToList();
 
@@ -249,7 +249,7 @@ internal static class BakedChainWalker
                 return known;
             }
 
-            var facts = TableFacts.FromSymbol(type);
+            var facts = TableFacts.FromSymbol(type, _model.Compilation);
             if (facts is null)
             {
                 return null;
@@ -278,7 +278,7 @@ internal static class BakedChainWalker
             var fact = facts.Columns.FirstOrDefault(c => c.PropertyName == property.Name);
             return fact is null
                 ? null
-                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall);
+                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter);
         }
 
         // X.Eq(Y): column vs column, or column vs runtime bind.
@@ -341,7 +341,7 @@ internal static class BakedChainWalker
                 return known;
             }
 
-            var facts = TableFacts.FromSymbol(type);
+            var facts = TableFacts.FromSymbol(type, _model.Compilation);
             if (facts is null)
             {
                 return null;

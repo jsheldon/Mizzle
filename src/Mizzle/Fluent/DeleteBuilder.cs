@@ -39,7 +39,7 @@ public sealed class DeleteBuilder
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public DeleteBuilder Where(IColumn column, object? value)
-        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
+        => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     public DeleteBuilder Returning(params IColumn[] columns)
         => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);

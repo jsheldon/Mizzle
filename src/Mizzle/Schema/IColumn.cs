@@ -17,6 +17,10 @@ public interface IColumn
     IColumn? ReferencedColumn { get; }
     int? Length { get; }
     ColumnRef ToRef();
+
+    // Wraps a domain value for binding, applying the column's storage
+    // converter (Map) when present. Nulls pass through unconverted.
+    ValueExpr Bind(object? value);
 }
 
 internal interface IBindableColumn

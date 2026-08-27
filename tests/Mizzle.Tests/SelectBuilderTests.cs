@@ -1,17 +1,17 @@
 namespace Mizzle.Tests;
 
-file sealed class Persons : PgTable<Persons>
+file sealed class Authors : PgTable<Authors>
 {
-    public Persons() : base("person", alias: "a") { }
-    public PgColumn<Guid> PersonId { get; } = Uuid("person_id");
-    public PgColumn<string> FirstName { get; } = Text("first_name");
-    public PgColumn<Guid> PracticeId { get; } = Uuid("practice_id");
+    public Authors() : base("authors", alias: "a") { }
+    public PgColumn<Guid> AuthorId { get; } = Uuid("author_id");
+    public PgColumn<string> DisplayName { get; } = Text("display_name");
+    public PgColumn<Guid> BlogId { get; } = Uuid("blog_id");
 }
 
-file sealed class Charts : PgTable<Charts>
+file sealed class Posts : PgTable<Posts>
 {
-    public Charts() : base("chart", alias: "b") { }
-    public PgColumn<Guid> PersonId { get; } = Uuid("person_id");
+    public Posts() : base("posts", alias: "p") { }
+    public PgColumn<Guid> AuthorId { get; } = Uuid("author_id");
 }
 
 public sealed class SelectBuilderWhereTests
@@ -25,21 +25,21 @@ public sealed class SelectBuilderWhereTests
     [Fact]
     public void Table_join_overloads_and_column_eq_read_cleanly()
     {
-        var a = new Persons();
-        var b = new Charts();
-        var practiceId = Guid.NewGuid();
+        var authors = new Authors();
+        var posts = new Posts();
+        var blogId = Guid.NewGuid();
 
         var builder = new SelectBuilder()
-            .Select(a.FirstName)
-            .From(a.ToFrom())
-            .InnerJoin(b, Sql.Eq(a.PersonId, b.PersonId))
-            .Where(a.PracticeId, practiceId);
+            .Select(authors.DisplayName)
+            .From(authors.ToFrom())
+            .InnerJoin(posts, Sql.Eq(authors.AuthorId, posts.AuthorId))
+            .Where(authors.BlogId, blogId);
 
         var (sql, values) = EmitPg(builder.Build());
         Assert.Equal(
-            "SELECT \"a\".\"first_name\" FROM \"person\" AS \"a\" INNER JOIN \"chart\" AS \"b\" ON \"a\".\"person_id\" = \"b\".\"person_id\" WHERE \"a\".\"practice_id\" = $1",
+            "SELECT \"a\".\"display_name\" FROM \"authors\" AS \"a\" INNER JOIN \"posts\" AS \"p\" ON \"a\".\"author_id\" = \"p\".\"author_id\" WHERE \"a\".\"blog_id\" = $1",
             sql);
-        Assert.Equal([practiceId], values);
+        Assert.Equal([blogId], values);
     }
 
     [Fact]

@@ -16,6 +16,14 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    internal static readonly DiagnosticDescriptor InvalidConverter = new(
+        "MIZ008",
+        "Column converter is not statically bakeable",
+        "Column '{0}': Map arguments must be static method references so generated mappers can call them",
+        "Mizzle",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var tables = context.SyntaxProvider
@@ -42,6 +50,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
         var columns = new List<ColumnModel>();
         var mismatches = new List<string>();
+        var converterErrors = new List<(string Name, Location Location)>();
         foreach (var member in symbol.GetMembers().OfType<IPropertySymbol>())
         {
             if (member.IsStatic || member.Type is not INamedTypeSymbol type)
@@ -62,15 +71,21 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
             var isIdentity = FactoryName(member) == "Identity";
             var modifiers = TableFacts.ModifierNames(member);
-            columns.Add(new ColumnModel(
-                member.Name,
-                ToCSharpType(clr),
-                ReaderMethod(clr),
-                isIdentity,
-                isIdentity || modifiers.Contains("NotNull") || modifiers.Contains("PrimaryKey")));
+            var isRequired = isIdentity || modifiers.Contains("NotNull") || modifiers.Contains("PrimaryKey");
+            var mapStatus = TableFacts.GetMapInfo(
+                member, context.SemanticModel.Compilation, out var converterFq, out var storageReader, out var mapLocation);
+            if (mapStatus == MapStatus.Invalid)
+            {
+                converterErrors.Add((member.Name, mapLocation ?? member.Locations.FirstOrDefault() ?? Location.None));
+                continue;
+            }
+
+            columns.Add(mapStatus == MapStatus.Valid
+                ? new ColumnModel(member.Name, ToCSharpType(clr), storageReader!, isIdentity, isRequired, converterFq)
+                : new ColumnModel(member.Name, ToCSharpType(clr), ReaderMethod(clr), isIdentity, isRequired));
         }
 
-        if (columns.Count == 0 && mismatches.Count == 0)
+        if (columns.Count == 0 && mismatches.Count == 0 && converterErrors.Count == 0)
         {
             return null;
         }
@@ -79,11 +94,16 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             ? "Mizzle.Generated"
             : symbol.ContainingNamespace.ToDisplayString();
 
-        return new TableModel(ns, symbol.Name, Singular(symbol.Name), columns, mismatches);
+        return new TableModel(ns, symbol.Name, Singular(symbol.Name), columns, mismatches, converterErrors);
     }
 
     private static void Generate(SourceProductionContext context, TableModel table)
     {
+        foreach (var (name, location) in table.ConverterErrors)
+        {
+            context.ReportDiagnostic(Diagnostic.Create(InvalidConverter, location, name));
+        }
+
         foreach (var name in table.Mismatches)
         {
             context.ReportDiagnostic(Diagnostic.Create(DialectMismatch, Location.None, name));
@@ -155,9 +175,14 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         => column.IsRequired ? column.ClrType : column.ClrType + "?";
 
     private static string ReadCall(ColumnModel column, int ordinal)
-        => column.IsRequired
+    {
+        var read = column.ConverterFq is null
             ? $"r.{column.Reader}({ordinal})"
-            : $"r.IsDBNull({ordinal}) ? ({column.ClrType}?)null : r.{column.Reader}({ordinal})";
+            : $"{column.ConverterFq}(r.{column.Reader}({ordinal}))";
+        return column.IsRequired
+            ? read
+            : $"r.IsDBNull({ordinal}) ? ({column.ClrType}?)null : {read}";
+    }
 
     private static string Singular(string tableName)
     {
@@ -176,13 +201,15 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             string tableName,
             string singular,
             List<ColumnModel> columns,
-            List<string> mismatches)
+            List<string> mismatches,
+            List<(string Name, Location Location)> converterErrors)
         {
             Namespace = ns;
             TableName = tableName;
             Singular = singular;
             Columns = columns;
             Mismatches = mismatches;
+            ConverterErrors = converterErrors;
         }
 
         public string Namespace { get; }
@@ -190,17 +217,19 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         public string Singular { get; }
         public List<ColumnModel> Columns { get; }
         public List<string> Mismatches { get; }
+        public List<(string Name, Location Location)> ConverterErrors { get; }
     }
 
     private sealed class ColumnModel
     {
-        public ColumnModel(string name, string clrType, string reader, bool isIdentity, bool isRequired)
+        public ColumnModel(string name, string clrType, string reader, bool isIdentity, bool isRequired, string? converterFq = null)
         {
             Name = name;
             ClrType = clrType;
             Reader = reader;
             IsIdentity = isIdentity;
             IsRequired = isRequired;
+            ConverterFq = converterFq;
         }
 
         public string Name { get; }
@@ -208,5 +237,6 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         public string Reader { get; }
         public bool IsIdentity { get; }
         public bool IsRequired { get; }
+        public string? ConverterFq { get; }
     }
 }

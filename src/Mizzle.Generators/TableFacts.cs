@@ -22,16 +22,27 @@ internal sealed class TableFactsModel
     public IReadOnlyList<TableColumnFact> Columns { get; }
 }
 
+internal enum MapStatus
+{
+    None,
+    Valid,
+    Invalid,
+}
+
 internal sealed class TableColumnFact
 {
-    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall)
+    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null)
     {
         PropertyName = propertyName;
         DbName = dbName;
         ClrTypeName = clrTypeName;
         IsRequired = isRequired;
         ReaderCall = readerCall;
+        ReadConverter = readConverter;
     }
+
+    // Fully-qualified static method wrapped around the storage read, from .Map(read, write).
+    public string? ReadConverter { get; }
 
     public string PropertyName { get; }
     public string DbName { get; }
@@ -47,7 +58,7 @@ internal sealed class TableColumnFact
 
 internal static class TableFacts
 {
-    public static TableFactsModel? FromSymbol(INamedTypeSymbol symbol)
+    public static TableFactsModel? FromSymbol(INamedTypeSymbol symbol, Compilation compilation)
     {
         if (symbol.IsAbstract || !IsDialectTable(symbol, out var postgres))
         {
@@ -87,7 +98,15 @@ internal static class TableFacts
             var isRequired = FactoryName(member) == "Identity"
                 || modifiers.Contains("NotNull")
                 || modifiers.Contains("PrimaryKey");
-            columns.Add(new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr)));
+            var mapStatus = GetMapInfo(member, compilation, out var converterFq, out var storageReader, out _);
+            if (mapStatus == MapStatus.Invalid)
+            {
+                return null;
+            }
+
+            columns.Add(mapStatus == MapStatus.Valid
+                ? new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, storageReader!, converterFq)
+                : new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr)));
         }
 
         if (columns.Count == 0)
@@ -178,6 +197,79 @@ internal static class TableFacts
             MemberAccessExpressionSyntax access => access.Name.Identifier.Text,
             _ => null
         };
+
+    // Analyzes a column property's initializer chain for .Map(read, write).
+    // Valid: read argument is a static method reference -> converterFq + the
+    // factory's storage reader. Invalid: Map present but not bakeable.
+    public static MapStatus GetMapInfo(
+        IPropertySymbol member,
+        Compilation compilation,
+        out string? converterFq,
+        out string? storageReader,
+        out Location? mapLocation)
+    {
+        converterFq = null;
+        storageReader = null;
+        mapLocation = null;
+        InvocationExpressionSyntax? mapCall = null;
+        foreach (var syntaxRef in member.DeclaringSyntaxReferences)
+        {
+            if (syntaxRef.GetSyntax() is not PropertyDeclarationSyntax property
+                || property.Initializer?.Value is not InvocationExpressionSyntax invocation)
+            {
+                continue;
+            }
+
+            while (invocation.Expression is MemberAccessExpressionSyntax { Expression: InvocationExpressionSyntax inner } access)
+            {
+                if (access.Name.Identifier.Text == "Map")
+                {
+                    mapCall = invocation;
+                }
+
+                invocation = inner;
+            }
+
+            break;
+        }
+
+        if (mapCall is null)
+        {
+            return MapStatus.None;
+        }
+
+        mapLocation = mapCall.GetLocation();
+        storageReader = FactoryName(member) switch
+        {
+            "Text" or "NVarChar" or "NVarCharMax" or "Char" or "VarChar" or "Varchar" => "GetString",
+            "Integer" or "Int" or "Identity" => "GetInt32",
+            "BigInt" => "GetInt64",
+            "Boolean" or "Bit" => "GetBoolean",
+            "DateTime" or "DateTime2" => "GetDateTime",
+            "Timestamptz" => "GetFieldValue<global::System.DateTimeOffset>",
+            "Date" => "GetFieldValue<global::System.DateOnly>",
+            "Uuid" or "UniqueIdentifier" => "GetGuid",
+            "Timestamp" => "GetFieldValue<byte[]>",
+            _ => null
+        };
+        if (storageReader is null || mapCall.ArgumentList.Arguments.Count < 2)
+        {
+            return MapStatus.Invalid;
+        }
+
+        var readArg = mapCall.ArgumentList.Arguments[0].Expression;
+        var model = compilation.GetSemanticModel(readArg.SyntaxTree);
+        var info = model.GetSymbolInfo(readArg);
+        var method = info.Symbol as IMethodSymbol
+            ?? info.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+        if (method is not { IsStatic: true })
+        {
+            return MapStatus.Invalid;
+        }
+
+        converterFq = method.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + "." + method.Name;
+        return MapStatus.Valid;
+    }
 
     // Names of the fluent modifiers chained after the factory call, e.g.
     // Text("email").NotNull().Unique() -> ["Unique", "NotNull"].
