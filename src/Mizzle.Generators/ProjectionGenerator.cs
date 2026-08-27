@@ -399,7 +399,9 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         foreach (var (group, name) in mapped)
         {
             var first = group.First();
-            EmitMapper(sb, name, FullyQualified(first.Namespace, first.TypeName), MapperBody(first.MapperPlan!, first.Spec!, trimStrings));
+            // The target's real namespace, not the call site's -- a bound T is
+            // routinely declared in another assembly or layer.
+            EmitMapper(sb, name, first.MapperPlan!.TargetFq, MapperBody(first.MapperPlan!, first.Spec!, trimStrings));
         }
 
         sb.AppendLine("}");

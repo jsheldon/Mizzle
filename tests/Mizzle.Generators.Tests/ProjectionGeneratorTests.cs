@@ -823,4 +823,87 @@ public sealed class ProjectionGeneratorTests
         // NotNull() on the FROM table stays non-nullable.
         Assert.Contains("Expired: global::Demo.E2EConvert.ToBoolean(r.GetString(5).Trim())", generated, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Projection_target_in_another_namespace_maps_correctly()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+            using Contracts.Profiles;
+
+            namespace Contracts.Profiles
+            {
+                public record ProfileContract(Guid PatientId, string PostalCode);
+            }
+
+            namespace Infra.Reads
+            {
+                using Demo;
+
+                public static class CrossNsQ
+                {
+                    public static async Task Run(PostgresDb db)
+                    {
+                        var p = new Persons();
+                        var rows = await db.Select(p.PersonId.As("PatientId"), p.Zip.As("PostalCode"))
+                            .From(p)
+                            .ToListAsync<ProfileContract>();
+                    }
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(AliasTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        // The mapper's return type must be the target's real namespace, not the
+        // call site's (Infra.Reads).
+        Assert.Contains("global::Contracts.Profiles.ProfileContract Read(", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Named_alias_argument_is_not_read_as_schema()
+    {
+        const string tables = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class Folks : SqlTable<Folks>
+            {
+                // Named argument skips schema -- must not be read positionally.
+                public Folks() : base("person", alias: "a") { }
+                public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
+            }
+            """;
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public class FolkRow
+            {
+                public Guid PersonId { get; set; }
+            }
+
+            public static class FolkQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    var f = new Folks();
+                    var rows = await db.Select(f.PersonId).From(f).ToListAsync<FolkRow>();
+                }
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(tables, callSite));
+        Assert.Contains("FROM [person] AS [a]", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("[a].[person]", generated, StringComparison.Ordinal);
+    }
 }

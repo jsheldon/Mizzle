@@ -440,23 +440,38 @@ internal static class TableFacts
                     return false;
                 }
 
-                var values = new string?[args.Count];
+                // base(name, schema, alias) -- but honor named arguments, since
+                // base("person", alias: "a") is the natural way to skip schema.
+                // Reading positionally would take "a" as the schema and emit
+                // FROM [a].[person] AS [person].
                 for (var i = 0; i < args.Count; i++)
                 {
-                    if (args[i].Expression is LiteralExpressionSyntax literal
-                        && literal.IsKind(SyntaxKind.StringLiteralExpression))
+                    if (args[i].Expression is not LiteralExpressionSyntax literal
+                        || !literal.IsKind(SyntaxKind.StringLiteralExpression))
                     {
-                        values[i] = literal.Token.ValueText;
-                        continue;
+                        return false;
                     }
 
-                    return false;
+                    var value = literal.Token.ValueText;
+                    var parameter = args[i].NameColon?.Name.Identifier.Text
+                        ?? i switch { 0 => "name", 1 => "schema", _ => "alias" };
+                    switch (parameter)
+                    {
+                        case "name":
+                            tableName = value;
+                            break;
+                        case "schema":
+                            schema = value;
+                            break;
+                        case "alias":
+                            alias = value;
+                            break;
+                        default:
+                            return false;
+                    }
                 }
 
-                tableName = values[0]!;
-                schema = args.Count > 1 ? values[1] : null;
-                alias = args.Count > 2 ? values[2] : null;
-                return true;
+                return tableName.Length > 0;
             }
         }
 
