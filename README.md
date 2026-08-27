@@ -1,5 +1,11 @@
 # Mizzle
 
+[![CI](https://github.com/jsheldon/Mizzle/actions/workflows/ci.yml/badge.svg)](https://github.com/jsheldon/Mizzle/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/Mizzle.svg)](https://www.nuget.org/packages/Mizzle)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-10.0-512BD4.svg)](https://dotnet.microsoft.com/)
+[![Status](https://img.shields.io/badge/status-alpha-orange.svg)]()
+
 Fluent, type-safe SQL for .NET, inspired by [Drizzle ORM](https://orm.drizzle.team/).
 
 Declare your schema in C#, build queries against typed columns, and let Mizzle
