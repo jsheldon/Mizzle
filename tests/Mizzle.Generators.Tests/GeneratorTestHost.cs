@@ -12,6 +12,9 @@ namespace Mizzle.Generators.Tests;
 internal static class GeneratorTestHost
 {
     public static GeneratorDriverRunResult Run(params string[] sources)
+        => Run(false, sources);
+
+    public static GeneratorDriverRunResult Run(bool trimStrings, params string[] sources)
     {
         var parseOptions = ParseOptions();
         var compilation = CreateCompilation(sources, parseOptions);
@@ -21,11 +24,15 @@ internal static class GeneratorTestHost
                 new QueryInterceptorGenerator().AsSourceGenerator(),
                 new ProjectionGenerator().AsSourceGenerator()
             ],
-            parseOptions: parseOptions);
+            parseOptions: parseOptions,
+            optionsProvider: new TestAnalyzerConfigOptionsProvider(null, trimStrings));
         return driver.RunGenerators(compilation).GetRunResult();
     }
 
     public static (GeneratorDriverRunResult Result, ImmutableArray<Diagnostic> CompileDiagnostics) RunAndCompile(params string[] sources)
+        => RunAndCompile(false, sources);
+
+    public static (GeneratorDriverRunResult Result, ImmutableArray<Diagnostic> CompileDiagnostics) RunAndCompile(bool trimStrings, params string[] sources)
     {
         var parseOptions = ParseOptions();
         var compilation = CreateCompilation(sources, parseOptions);
@@ -35,7 +42,8 @@ internal static class GeneratorTestHost
                 new QueryInterceptorGenerator().AsSourceGenerator(),
                 new ProjectionGenerator().AsSourceGenerator()
             ],
-            parseOptions: parseOptions);
+            parseOptions: parseOptions,
+            optionsProvider: new TestAnalyzerConfigOptionsProvider(null, trimStrings));
         driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
         return (driver.GetRunResult(), output.GetDiagnostics());
     }
@@ -85,8 +93,8 @@ internal static class GeneratorTestHost
     {
         private readonly AnalyzerConfigOptions _options;
 
-        public TestAnalyzerConfigOptionsProvider(string? queryMode)
-            => _options = new TestAnalyzerConfigOptions(queryMode);
+        public TestAnalyzerConfigOptionsProvider(string? queryMode, bool trimStrings = false)
+            => _options = new TestAnalyzerConfigOptions(queryMode, trimStrings);
 
         public override AnalyzerConfigOptions GlobalOptions => _options;
 
@@ -98,14 +106,25 @@ internal static class GeneratorTestHost
     private sealed class TestAnalyzerConfigOptions : AnalyzerConfigOptions
     {
         private readonly string? _queryMode;
+        private readonly bool _trimStrings;
 
-        public TestAnalyzerConfigOptions(string? queryMode) => _queryMode = queryMode;
+        public TestAnalyzerConfigOptions(string? queryMode, bool trimStrings = false)
+        {
+            _queryMode = queryMode;
+            _trimStrings = trimStrings;
+        }
 
         public override bool TryGetValue(string key, out string value)
         {
             if (key == "build_property.MizzleQueryMode" && _queryMode is not null)
             {
                 value = _queryMode;
+                return true;
+            }
+
+            if (key == "build_property.MizzleTrimStrings" && _trimStrings)
+            {
+                value = "true";
                 return true;
             }
 

@@ -62,7 +62,7 @@ public sealed class SelectBuilder
         => Copy(select: [..columns.Select(c => new SelectItem(c, null))]);
 
     public SelectBuilder Select(params IColumn[] columns)
-        => Copy(select: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
+        => Copy(select: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))]);
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 

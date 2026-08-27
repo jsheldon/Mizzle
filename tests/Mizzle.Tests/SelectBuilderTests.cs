@@ -23,6 +23,21 @@ public sealed class SelectBuilderWhereTests
     }
 
     [Fact]
+    public void Select_alias_emits_as_clause_and_keeps_table_alias()
+    {
+        var authors = new Authors();
+
+        var builder = new SelectBuilder()
+            .Select(authors.AuthorId.As("Id"), authors.DisplayName)
+            .From(authors.ToFrom());
+
+        var (sql, _) = EmitPg(builder.Build());
+        Assert.Equal(
+            "SELECT \"a\".\"author_id\" AS \"Id\", \"a\".\"display_name\" FROM \"authors\" AS \"a\"",
+            sql);
+    }
+
+    [Fact]
     public void Table_join_overloads_and_column_eq_read_cleanly()
     {
         var authors = new Authors();

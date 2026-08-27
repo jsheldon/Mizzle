@@ -50,6 +50,24 @@ public sealed class PgColumn<T> : Column<T>
         return this;
     }
 
+    // Excludes this column from MizzleTrimStrings, for values where trailing
+    // whitespace is meaningful.
+    public PgColumn<T> Untrimmed()
+    {
+        MarkUntrimmed();
+        return this;
+    }
+
+    // Binds this column to a differently-named projection member. Returns a
+    // copy; the table's own instance is shared across queries and must not change.
+    public PgColumn<T> As(string name)
+    {
+        var column = new PgColumn<T>(Name);
+        column.CopyFrom(this);
+        column.SetProjectionName(name);
+        return column;
+    }
+
     // Converts a legacy storage representation to a domain type. Both
     // arguments must be static method references so the source generators
     // can bake the read conversion into generated mappers.

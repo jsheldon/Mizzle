@@ -54,8 +54,17 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    internal static readonly DiagnosticDescriptor MemberTypeMismatch = new(
+        "MIZ010",
+        "Selected column type does not match member type",
+        "Column '{0}' reads as '{1}' but member '{2}' of '{3}' is '{4}'",
+        "Mizzle",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     private static readonly Dictionary<string, DiagnosticDescriptor> Descriptors = new()
     {
+        ["MIZ010"] = MemberTypeMismatch,
         ["MIZ003"] = NoTargetMember,
         ["MIZ004"] = RequiredMemberUnfilled,
         ["MIZ005"] = NullableIntoNonNullable,
@@ -76,7 +85,14 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             .Select(static (site, _) => site!)
             .Collect();
 
-        context.RegisterSourceOutput(sites, static (spc, collected) => Generate(spc, collected));
+        var trimStrings = context.AnalyzerConfigOptionsProvider
+            .Select(static (provider, _) =>
+                provider.GlobalOptions.TryGetValue("build_property.MizzleTrimStrings", out var value)
+                && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+
+        context.RegisterSourceOutput(
+            sites.Combine(trimStrings),
+            static (spc, pair) => Generate(spc, pair.Left, pair.Right));
     }
 
     private static ProjectionSite? Transform(GeneratorSyntaxContext context)
@@ -138,11 +154,11 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 : null;
         }
 
-        string? mapperBody = null;
+        MapperPlan? mapperPlan = null;
         var errors = new List<(string Id, string[] Args)>();
         if (bound is not null)
         {
-            mapperBody = BuildMapBody(bound, spec, errors);
+            mapperPlan = BuildMapPlan(bound, spec, model.Compilation, errors);
         }
 
 #pragma warning disable RSEXPERIMENTAL002
@@ -154,12 +170,18 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         var attribute = location.GetInterceptsLocationAttributeSyntax();
 #pragma warning restore RSEXPERIMENTAL002
-        return new ProjectionSite(typeName, ns, terminator, spec, sql, attribute, mapperBody, errors, invocation.GetLocation());
+        return new ProjectionSite(typeName, ns, terminator, spec, sql, attribute, mapperPlan, errors, invocation.GetLocation());
     }
 
-    // Builds "new global::Ns.T(param: expr, ...) { Prop = expr, ... }" or
-    // records diagnostics into errors and returns null.
-    private static string? BuildMapBody(INamedTypeSymbol target, BakedQuerySpec spec, List<(string Id, string[] Args)> errors)
+    // Records which selected column ordinal fills which member, or records
+    // diagnostics into errors and returns null. Expression text is composed later,
+    // in Generate, because it depends on the MizzleTrimStrings build property,
+    // which only reaches the pipeline at the RegisterSourceOutput stage.
+    private static MapperPlan? BuildMapPlan(
+        INamedTypeSymbol target,
+        BakedQuerySpec spec,
+        Compilation compilation,
+        List<(string Id, string[] Args)> errors)
     {
         static string Norm(string name) => name.Replace("_", "").ToLowerInvariant();
 
@@ -181,13 +203,13 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         var usedParams = new HashSet<IParameterSymbol>(SymbolEqualityComparer.Default);
         var usedProps = new HashSet<IPropertySymbol>(SymbolEqualityComparer.Default);
-        var ctorArgs = new Dictionary<string, string>();
-        var propAssigns = new List<(string Name, string Expr)>();
+        var ctorArgs = new Dictionary<string, int>();
+        var propAssigns = new List<(string Name, int Ordinal)>();
 
         for (var i = 0; i < spec.Select.Count; i++)
         {
             var column = spec.Select[i];
-            var norm = Norm(column.PropertyName);
+            var norm = Norm(column.MemberName);
             var paramMatches = ctor is null
                 ? []
                 : ctor.Parameters.Where(p => !usedParams.Contains(p) && Norm(p.Name) == norm).ToList();
@@ -195,13 +217,13 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             var total = paramMatches.Count + propMatches.Count;
             if (total == 0)
             {
-                errors.Add(("MIZ003", [column.PropertyName, targetName]));
+                errors.Add(("MIZ003", [column.MemberName, targetName]));
                 continue;
             }
 
             if (total > 1)
             {
-                errors.Add(("MIZ006", [column.PropertyName, targetName]));
+                errors.Add(("MIZ006", [column.MemberName, targetName]));
                 continue;
             }
 
@@ -209,20 +231,38 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             var memberName = paramMatches.Count == 1 ? paramMatches[0].Name : propMatches[0].Name;
             if (!column.IsRequired && !IsNullable(memberType))
             {
-                errors.Add(("MIZ005", [column.PropertyName, memberName, targetName]));
+                errors.Add(("MIZ005", [column.MemberName, memberName, targetName]));
                 continue;
             }
 
-            var expr = ReadExpression(column, i);
+            // Nullability is settled above; compare the underlying types so a
+            // converted column landing on the wrong member is caught here rather
+            // than as CS0029 inside the generated mapper.
+            var underlying = memberType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+                ? ((INamedTypeSymbol)memberType).TypeArguments[0]
+                : memberType;
+            var columnType = TableFacts.ResolveClrType(column.ClrTypeName, compilation);
+            if (columnType is not null && !compilation.ClassifyConversion(columnType, underlying).IsImplicit)
+            {
+                errors.Add(("MIZ010", [
+                    column.MemberName,
+                    column.ClrTypeName,
+                    memberName,
+                    targetName,
+                    memberType.ToDisplayString()
+                ]));
+                continue;
+            }
+
             if (paramMatches.Count == 1)
             {
                 usedParams.Add(paramMatches[0]);
-                ctorArgs[paramMatches[0].Name] = expr;
+                ctorArgs[paramMatches[0].Name] = i;
             }
             else
             {
                 usedProps.Add(propMatches[0]);
-                propAssigns.Add((propMatches[0].Name, expr));
+                propAssigns.Add((propMatches[0].Name, i));
             }
         }
 
@@ -245,23 +285,49 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         }
 
         var fq = target.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        var args = ctor is null
-            ? ""
-            : string.Join(", ", ctor.Parameters.Where(usedParams.Contains).Select(p => $"{p.Name}: {ctorArgs[p.Name]}"));
-        var body = $"new {fq}({args})";
-        if (propAssigns.Count > 0)
+        var orderedCtorArgs = ctor is null
+            ? []
+            : ctor.Parameters.Where(usedParams.Contains).Select(p => (p.Name, ctorArgs[p.Name])).ToList();
+        return new MapperPlan(fq, orderedCtorArgs, propAssigns);
+    }
+
+    // Composes "new global::Ns.T(param: expr, ...) { Prop = expr, ... }" once the
+    // trim flag is known.
+    private static string MapperBody(MapperPlan plan, BakedQuerySpec spec, bool trimStrings)
+    {
+        var args = string.Join(
+            ", ",
+            plan.CtorArgs.Select(a => $"{a.Name}: {ReadExpression(spec.Select[a.Ordinal], a.Ordinal, trimStrings)}"));
+        var body = $"new {plan.TargetFq}({args})";
+        if (plan.PropAssigns.Count > 0)
         {
-            body += " { " + string.Join(", ", propAssigns.Select(a => $"{a.Name} = {a.Expr}")) + " }";
+            body += " { " + string.Join(
+                ", ",
+                plan.PropAssigns.Select(a => $"{a.Name} = {ReadExpression(spec.Select[a.Ordinal], a.Ordinal, trimStrings)}")) + " }";
         }
 
         return body;
+    }
+
+    private sealed class MapperPlan
+    {
+        public MapperPlan(string targetFq, List<(string Name, int Ordinal)> ctorArgs, List<(string Name, int Ordinal)> propAssigns)
+        {
+            TargetFq = targetFq;
+            CtorArgs = ctorArgs;
+            PropAssigns = propAssigns;
+        }
+
+        public string TargetFq { get; }
+        public List<(string Name, int Ordinal)> CtorArgs { get; }
+        public List<(string Name, int Ordinal)> PropAssigns { get; }
     }
 
     private static bool IsNullable(ITypeSymbol type)
         => type.NullableAnnotation == NullableAnnotation.Annotated
             || type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
 
-    private static void Generate(SourceProductionContext context, ImmutableArray<ProjectionSite> sites)
+    private static void Generate(SourceProductionContext context, ImmutableArray<ProjectionSite> sites, bool trimStrings)
     {
         if (sites.Length == 0)
         {
@@ -288,7 +354,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         AppendInterceptsLocationDeclaration(sb);
 
         // Generate mode: one record + mapper per distinct (namespace, name); first shape wins.
-        var generated = valid.Where(s => s.MapperBody is null).GroupBy(s => (s.Namespace, s.TypeName)).ToList();
+        var generated = valid.Where(s => s.MapperPlan is null).GroupBy(s => (s.Namespace, s.TypeName)).ToList();
         foreach (var group in generated)
         {
             var spec = group.First().Spec!;
@@ -322,18 +388,18 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 sb,
                 GeneratedMapperName(group.Key.TypeName),
                 fq,
-                $"new {fq}({string.Join(", ", spec.Select.Select(ReadCall))})");
+                $"new {fq}({string.Join(", ", spec.Select.Select((c, i) => ReadCall(c, i, trimStrings)))})");
         }
 
         // Map mode: one mapper per distinct (namespace, type, sql, terminator).
-        var mapped = valid.Where(s => s.MapperBody is not null)
+        var mapped = valid.Where(s => s.MapperPlan is not null)
             .GroupBy(s => (s.Namespace, s.TypeName, s.Sql, s.Terminator))
             .Select((g, i) => (Group: g, Name: $"{g.Key.TypeName}IntoMapper{i}"))
             .ToList();
         foreach (var (group, name) in mapped)
         {
             var first = group.First();
-            EmitMapper(sb, name, FullyQualified(first.Namespace, first.TypeName), first.MapperBody!);
+            EmitMapper(sb, name, FullyQualified(first.Namespace, first.TypeName), MapperBody(first.MapperPlan!, first.Spec!, trimStrings));
         }
 
         sb.AppendLine("}");
@@ -453,17 +519,21 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
     private static string MemberType(BakedColumn column)
         => column.IsRequired
-            ? $"{column.ClrTypeName} {column.PropertyName}"
-            : $"{column.ClrTypeName}? {column.PropertyName}";
+            ? $"{column.ClrTypeName} {column.MemberName}"
+            : $"{column.ClrTypeName}? {column.MemberName}";
 
-    private static string ReadCall(BakedColumn column, int ordinal)
-        => ReadExpression(column, ordinal);
+    private static string ReadCall(BakedColumn column, int ordinal, bool trimStrings)
+        => ReadExpression(column, ordinal, trimStrings);
 
-    private static string ReadExpression(BakedColumn column, int ordinal)
+    private static string ReadExpression(BakedColumn column, int ordinal, bool trimStrings)
     {
-        var read = column.ReadConverter is null
-            ? $"r.{column.ReaderCall}({ordinal})"
-            : $"{column.ReadConverter}(r.{column.ReaderCall}({ordinal}))";
+        var storage = $"r.{column.ReaderCall}({ordinal})";
+        if (trimStrings && !column.IsUntrimmed && column.ReaderCall == "GetString")
+        {
+            storage += ".Trim()";
+        }
+
+        var read = column.ReadConverter is null ? storage : $"{column.ReadConverter}({storage})";
         return column.IsRequired
             ? read
             : $"r.IsDBNull({ordinal}) ? ({column.ClrTypeName}?)null : {read}";
@@ -483,7 +553,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             BakedQuerySpec? spec,
             string? sql,
             string? attribute,
-            string? mapperBody,
+            MapperPlan? mapperPlan,
             List<(string Id, string[] Args)> errors,
             Location location)
         {
@@ -493,7 +563,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             Spec = spec;
             Sql = sql;
             Attribute = attribute;
-            MapperBody = mapperBody;
+            MapperPlan = mapperPlan;
             Errors = errors;
             Location = location;
         }
@@ -504,7 +574,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         public BakedQuerySpec? Spec { get; }
         public string? Sql { get; }
         public string? Attribute { get; }
-        public string? MapperBody { get; }
+        public MapperPlan? MapperPlan { get; }
         public List<(string Id, string[] Args)> Errors { get; }
         public Location Location { get; }
     }

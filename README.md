@@ -122,6 +122,42 @@ reflection, no runtime registry. The converters must be static method
 references (not lambdas) so the source generator can bake them; a lambda is a
 build error (`MIZ008`).
 
+## Projecting into domain types
+
+A typed terminator matches columns to members by name, ignoring `_` and case.
+When the names differ, alias the column at the select site:
+
+```csharp
+var profile = await db.Select(
+        persons.PersonId.As("PatientId"),
+        persons.Zip.As("PostalCode"),
+        persons.FirstName)                 // already matches
+    .From(persons)
+    .FirstOrDefaultAsync<PatientProfile>(ct);
+```
+
+`As` returns a copy, so the table's own column is unchanged, and it emits a real
+SQL alias: `SELECT [a].[person_id] AS [PatientId]`. The existing projection
+diagnostics report the aliased name, so a typo is `MIZ003` and a type mismatch
+is `MIZ010`, both pointing at your call site.
+
+Legacy schemas often store blank-padded `CHAR`. Opt the whole compilation into
+trimming string reads:
+
+```xml
+<PropertyGroup>
+  <MizzleTrimStrings>true</MizzleTrimStrings>
+</PropertyGroup>
+```
+
+Trimming applies to string storage reads only, before any `Map` converter, and
+never on write — so converters stop needing to defend against padding. Exclude a
+column where trailing whitespace is meaningful:
+
+```csharp
+public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
+```
+
 ## How queries execute
 
 Every query builds an immutable IR graph. Before any SQL is written, a capability

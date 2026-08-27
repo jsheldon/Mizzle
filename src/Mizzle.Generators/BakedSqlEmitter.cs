@@ -4,7 +4,7 @@ namespace Mizzle.Generators;
 
 internal sealed class BakedColumn
 {
-    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null)
+    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false)
     {
         TableAlias = tableAlias;
         DbName = dbName;
@@ -13,6 +13,8 @@ internal sealed class BakedColumn
         IsRequired = isRequired;
         ReaderCall = readerCall;
         ReadConverter = readConverter;
+        ProjectionName = projectionName;
+        IsUntrimmed = isUntrimmed;
     }
 
     public string TableAlias { get; }
@@ -22,6 +24,15 @@ internal sealed class BakedColumn
     public bool IsRequired { get; }
     public string ReaderCall { get; }
     public string? ReadConverter { get; }
+
+    // Set by .As("...") at the select site.
+    public string? ProjectionName { get; }
+
+    // The name member matching and generated records use.
+    public string MemberName => ProjectionName ?? PropertyName;
+
+    // Untrimmed() on the column declaration.
+    public bool IsUntrimmed { get; }
 }
 
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
@@ -113,7 +124,7 @@ internal static class BakedSqlEmitter
             sql.Append("DISTINCT ");
         }
 
-        sql.Append(string.Join(", ", spec.Select.Select(c => Column(spec, c.TableAlias, c.DbName))));
+        sql.Append(string.Join(", ", spec.Select.Select(c => SelectItem(spec, c))));
         sql.Append(" FROM ");
         sql.Append(Table(spec, spec.From));
         foreach (var join in spec.Joins)
@@ -200,6 +211,12 @@ internal static class BakedSqlEmitter
             ? Quote(spec, table.TableName)
             : $"{Quote(spec, table.Schema)}.{Quote(spec, table.TableName)}";
         return $"{name} AS {Quote(spec, table.Alias)}";
+    }
+
+    private static string SelectItem(BakedQuerySpec spec, BakedColumn column)
+    {
+        var expr = Column(spec, column.TableAlias, column.DbName);
+        return column.ProjectionName is null ? expr : $"{expr} AS {Quote(spec, column.ProjectionName)}";
     }
 
     private static string Column(BakedQuerySpec spec, string alias, string dbName)

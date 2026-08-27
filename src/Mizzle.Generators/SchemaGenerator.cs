@@ -47,7 +47,14 @@ public sealed class SchemaGenerator : IIncrementalGenerator
                 static (ctx, _) => Transform(ctx))
             .Where(static table => table is not null);
 
-        context.RegisterSourceOutput(tables, static (spc, table) => Generate(spc, table!));
+        var trimStrings = context.AnalyzerConfigOptionsProvider
+            .Select(static (provider, _) =>
+                provider.GlobalOptions.TryGetValue("build_property.MizzleTrimStrings", out var value)
+                && string.Equals(value, "true", StringComparison.OrdinalIgnoreCase));
+
+        context.RegisterSourceOutput(
+            tables.Combine(trimStrings),
+            static (spc, pair) => Generate(spc, pair.Left!, pair.Right));
     }
 
     private static TableModel? Transform(GeneratorSyntaxContext context)
@@ -87,6 +94,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             var isIdentity = FactoryName(member) == "Identity";
             var modifiers = TableFacts.ModifierNames(member);
             var isRequired = isIdentity || modifiers.Contains("NotNull") || modifiers.Contains("PrimaryKey");
+            var isUntrimmed = modifiers.Contains("Untrimmed");
             var mapStatus = TableFacts.GetMapInfo(
                 member, context.SemanticModel.Compilation, out var converterFq, out var storageReader, out var mapLocation);
             var location = mapLocation ?? member.Locations.FirstOrDefault() ?? Location.None;
@@ -107,8 +115,8 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             }
 
             columns.Add(mapStatus == MapStatus.Valid
-                ? new ColumnModel(member.Name, ToCSharpType(clr), storageReader!, isIdentity, isRequired, converterFq)
-                : new ColumnModel(member.Name, ToCSharpType(clr), ReaderMethod(clr), isIdentity, isRequired));
+                ? new ColumnModel(member.Name, ToCSharpType(clr), storageReader!, isIdentity, isRequired, converterFq, isUntrimmed)
+                : new ColumnModel(member.Name, ToCSharpType(clr), ReaderMethod(clr), isIdentity, isRequired, null, isUntrimmed));
         }
 
         if (columns.Count == 0 && mismatches.Count == 0 && converterErrors.Count == 0)
@@ -123,7 +131,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         return new TableModel(ns, symbol.Name, Singular(symbol.Name), columns, mismatches, converterErrors);
     }
 
-    private static void Generate(SourceProductionContext context, TableModel table)
+    private static void Generate(SourceProductionContext context, TableModel table, bool trimStrings)
     {
         foreach (var (id, location, args) in table.ConverterErrors)
         {
@@ -174,7 +182,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         sb.Append(table.Singular);
         sb.AppendLine(" Read(global::System.Data.Common.DbDataReader r)");
         sb.Append("            => new(");
-        sb.Append(string.Join(", ", table.Columns.Select(ReadCall)));
+        sb.Append(string.Join(", ", table.Columns.Select((c, i) => ReadCall(c, i, trimStrings))));
         sb.AppendLine(");");
         sb.AppendLine("    }");
         sb.AppendLine("}");
@@ -200,11 +208,15 @@ public sealed class SchemaGenerator : IIncrementalGenerator
     private static string MemberType(ColumnModel column)
         => column.IsRequired ? column.ClrType : column.ClrType + "?";
 
-    private static string ReadCall(ColumnModel column, int ordinal)
+    private static string ReadCall(ColumnModel column, int ordinal, bool trimStrings)
     {
-        var read = column.ConverterFq is null
-            ? $"r.{column.Reader}({ordinal})"
-            : $"{column.ConverterFq}(r.{column.Reader}({ordinal}))";
+        var storage = $"r.{column.Reader}({ordinal})";
+        if (trimStrings && !column.IsUntrimmed && column.Reader == "GetString")
+        {
+            storage += ".Trim()";
+        }
+
+        var read = column.ConverterFq is null ? storage : $"{column.ConverterFq}({storage})";
         return column.IsRequired
             ? read
             : $"r.IsDBNull({ordinal}) ? ({column.ClrType}?)null : {read}";
@@ -248,7 +260,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
 
     private sealed class ColumnModel
     {
-        public ColumnModel(string name, string clrType, string reader, bool isIdentity, bool isRequired, string? converterFq = null)
+        public ColumnModel(string name, string clrType, string reader, bool isIdentity, bool isRequired, string? converterFq = null, bool isUntrimmed = false)
         {
             Name = name;
             ClrType = clrType;
@@ -256,6 +268,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             IsIdentity = isIdentity;
             IsRequired = isRequired;
             ConverterFq = converterFq;
+            IsUntrimmed = isUntrimmed;
         }
 
         public string Name { get; }
@@ -264,5 +277,6 @@ public sealed class SchemaGenerator : IIncrementalGenerator
         public bool IsIdentity { get; }
         public bool IsRequired { get; }
         public string? ConverterFq { get; }
+        public bool IsUntrimmed { get; }
     }
 }

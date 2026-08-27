@@ -13,3 +13,4 @@ MIZ006 | Mizzle | Error | Ambiguous projection member match
 MIZ007 | Mizzle | Error | Cannot generate projection type: query shape not statically visible
 MIZ008 | Mizzle | Error | Column converter must be a static method reference
 MIZ009 | Mizzle | Error | Column converter result type is nullable
+MIZ010 | Mizzle | Error | Selected column type does not match the projection member type

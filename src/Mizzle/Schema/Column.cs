@@ -31,6 +31,10 @@ public abstract class Column<T> : IColumn, IBindableColumn
 
     public int? Length { get; private set; }
 
+    public string? ProjectionName { get; private set; }
+
+    public bool IsUntrimmed { get; private set; }
+
     internal Type? StorageClrType { get; private set; }
 
     internal Func<object?, object?>? WriteConverter { get; private set; }
@@ -51,7 +55,25 @@ public abstract class Column<T> : IColumn, IBindableColumn
         DefaultValue = source.DefaultValue;
         ReferencedColumn = source.ReferencedColumn;
         Length = source.Length;
+        IsUntrimmed = source.IsUntrimmed;
     }
+
+    // Full clone for same-T modifiers (As, Untrimmed). Unlike CopyMetadataFrom,
+    // which serves Map's T -> TResult change at declaration time, this also
+    // carries TableAlias and converter state, because these modifiers run at
+    // query time after the table has bound its columns.
+    internal void CopyFrom(Column<T> source)
+    {
+        CopyMetadataFrom(source);
+        TableAlias = source.TableAlias;
+        StorageClrType = source.StorageClrType;
+        WriteConverter = source.WriteConverter;
+        ProjectionName = source.ProjectionName;
+    }
+
+    internal void SetProjectionName(string name) => ProjectionName = name;
+
+    protected void MarkUntrimmed() => IsUntrimmed = true;
 
     public ValueExpr Bind(object? value)
     {

@@ -36,7 +36,7 @@ internal enum MapStatus
 
 internal sealed class TableColumnFact
 {
-    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null)
+    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, bool isUntrimmed = false)
     {
         PropertyName = propertyName;
         DbName = dbName;
@@ -44,6 +44,7 @@ internal sealed class TableColumnFact
         IsRequired = isRequired;
         ReaderCall = readerCall;
         ReadConverter = readConverter;
+        IsUntrimmed = isUntrimmed;
     }
 
     // Fully-qualified static method wrapped around the storage read, from .Map(read, write).
@@ -59,6 +60,9 @@ internal sealed class TableColumnFact
 
     // DbDataReader accessor: GetString / GetGuid / GetFieldValue<...>
     public string ReaderCall { get; }
+
+    // Untrimmed() modifier: excludes this column from MizzleTrimStrings.
+    public bool IsUntrimmed { get; }
 }
 
 internal static class TableFacts
@@ -103,6 +107,7 @@ internal static class TableFacts
             var isRequired = FactoryName(member) == "Identity"
                 || modifiers.Contains("NotNull")
                 || modifiers.Contains("PrimaryKey");
+            var isUntrimmed = modifiers.Contains("Untrimmed");
             var mapStatus = GetMapInfo(member, compilation, out var converterFq, out var storageReader, out _);
             if (mapStatus is MapStatus.Invalid or MapStatus.NullableResult)
             {
@@ -110,8 +115,8 @@ internal static class TableFacts
             }
 
             columns.Add(mapStatus == MapStatus.Valid
-                ? new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, storageReader!, converterFq)
-                : new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr)));
+                ? new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, storageReader!, converterFq, isUntrimmed)
+                : new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr), null, isUntrimmed));
         }
 
         if (columns.Count == 0)
@@ -377,6 +382,25 @@ internal static class TableFacts
         SpecialType.System_Single => "GetFloat",
         _ when type.ToDisplayString() == "System.Guid" => "GetGuid",
         _ => $"GetFieldValue<{type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
+    };
+
+    // Inverse of ToCSharpType: recovers a symbol so callers can ask the
+    // compilation about conversions. Returns null for shapes it cannot round-trip
+    // (arrays, say), which callers treat as "unknown, don't complain".
+    public static ITypeSymbol? ResolveClrType(string clrTypeName, Compilation compilation) => clrTypeName switch
+    {
+        "int" => compilation.GetSpecialType(SpecialType.System_Int32),
+        "string" => compilation.GetSpecialType(SpecialType.System_String),
+        "long" => compilation.GetSpecialType(SpecialType.System_Int64),
+        "bool" => compilation.GetSpecialType(SpecialType.System_Boolean),
+        "System.DateTime" => compilation.GetSpecialType(SpecialType.System_DateTime),
+        "double" => compilation.GetSpecialType(SpecialType.System_Double),
+        "decimal" => compilation.GetSpecialType(SpecialType.System_Decimal),
+        "short" => compilation.GetSpecialType(SpecialType.System_Int16),
+        "byte" => compilation.GetSpecialType(SpecialType.System_Byte),
+        "float" => compilation.GetSpecialType(SpecialType.System_Single),
+        _ => compilation.GetTypeByMetadataName(
+            clrTypeName.StartsWith("global::", StringComparison.Ordinal) ? clrTypeName.Substring(8) : clrTypeName)
     };
 
     public static string ToCSharpType(ITypeSymbol type) => type.SpecialType switch

@@ -195,7 +195,7 @@ internal static class BakedChainWalker
         var leftAliases = new HashSet<string>(state.Joins.Where(j => j.IsLeft).Select(j => j.Table.Alias));
         var select = state.Select
             .Select(c => leftAliases.Contains(c.TableAlias)
-                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall, c.ReadConverter)
+                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall, c.ReadConverter, c.ProjectionName, c.IsUntrimmed)
                 : c)
             .ToList();
 
@@ -263,6 +263,23 @@ internal static class BakedChainWalker
         // t.Col -> (table facts, column fact) as a BakedColumn.
         public BakedColumn? ResolveColumn(ExpressionSyntax expression)
         {
+            string? projectionName = null;
+            if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "As" } asMember,
+                    ArgumentList.Arguments: { Count: 1 } asArgs
+                })
+            {
+                if (asArgs[0].Expression is not LiteralExpressionSyntax asLiteral
+                    || !asLiteral.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    return null;
+                }
+
+                projectionName = asLiteral.Token.ValueText;
+                expression = asMember.Expression;
+            }
+
             if (expression is not MemberAccessExpressionSyntax
                 || _model.GetSymbolInfo(expression).Symbol is not IPropertySymbol property
                 || property.Type is not INamedTypeSymbol propertyType
@@ -279,7 +296,7 @@ internal static class BakedChainWalker
             var fact = facts.Columns.FirstOrDefault(c => c.PropertyName == property.Name);
             return fact is null
                 ? null
-                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter);
+                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter, projectionName, fact.IsUntrimmed);
         }
 
         // X.Eq(Y): column vs column, or column vs runtime bind.

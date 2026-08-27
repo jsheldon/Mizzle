@@ -16,6 +16,12 @@ public interface IColumn
     object? DefaultValue { get; }
     IColumn? ReferencedColumn { get; }
     int? Length { get; }
+
+    // Projection alias set by As(...) at the select site. Null when unaliased.
+    string? ProjectionName { get; }
+
+    // Opts this column out of MizzleTrimStrings.
+    bool IsUntrimmed { get; }
     ColumnRef ToRef();
 
     // Wraps a domain value for binding, applying the column's storage

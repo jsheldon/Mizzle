@@ -272,4 +272,47 @@ public sealed class SchemaGeneratorTests
         var result = GeneratorTestHost.Run(source);
         Assert.Contains(result.Diagnostics, d => d.Id == "MIZ001");
     }
+
+    [Fact]
+    public void Schema_mapper_trims_string_reads_when_flag_is_on()
+    {
+        const string source = """
+            using System;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class Paddeds : SqlTable<Paddeds>
+            {
+                public Paddeds() : base("padded", "dbo", "d") { }
+                public SqlColumn<Guid> PaddedId { get; } = UniqueIdentifier("padded_id").NotNull();
+                public SqlColumn<string> City { get; } = VarChar("city", 35);
+                public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(true, source));
+        Assert.Contains("r.GetString(1).Trim()", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("r.GetString(2).Trim()", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("r.GetGuid(0).Trim()", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Schema_mapper_leaves_reads_unchanged_when_flag_is_off()
+    {
+        const string source = """
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class Paddeds : SqlTable<Paddeds>
+            {
+                public Paddeds() : base("padded", "dbo", "d") { }
+                public SqlColumn<string> City { get; } = VarChar("city", 35);
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(false, source));
+        Assert.DoesNotContain(".Trim()", generated, StringComparison.Ordinal);
+    }
 }
