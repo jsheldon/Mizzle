@@ -14,3 +14,4 @@ MIZ007 | Mizzle | Error | Cannot generate projection type: query shape not stati
 MIZ008 | Mizzle | Error | Column converter must be a static method reference
 MIZ009 | Mizzle | Error | Column converter result type is nullable
 MIZ010 | Mizzle | Error | Selected column type does not match the projection member type
+MIZ011 | Mizzle | Error | Two tables in one query share an alias

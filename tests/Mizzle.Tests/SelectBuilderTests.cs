@@ -23,6 +23,26 @@ public sealed class SelectBuilderWhereTests
     }
 
     [Fact]
+    public void WithAlias_lets_one_query_join_a_table_twice()
+    {
+        var authors = new Authors();
+        var other = new Authors().WithAlias("a2");
+
+        var builder = new SelectBuilder()
+            .Select(authors.DisplayName, other.DisplayName.As("OtherName"))
+            .From(authors.ToFrom())
+            .InnerJoin(other, Sql.Eq(authors.BlogId, other.BlogId));
+
+        var (sql, _) = EmitPg(builder.Build());
+        Assert.Equal(
+            "SELECT \"a\".\"display_name\", \"a2\".\"display_name\" AS \"OtherName\" "
+            + "FROM \"authors\" AS \"a\" INNER JOIN \"authors\" AS \"a2\" ON \"a\".\"blog_id\" = \"a2\".\"blog_id\"",
+            sql);
+        // The original is untouched -- instances are shareable.
+        Assert.Equal("a", authors.Alias);
+    }
+
+    [Fact]
     public void Select_alias_emits_as_clause_and_keeps_table_alias()
     {
         var authors = new Authors();

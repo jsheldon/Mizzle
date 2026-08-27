@@ -35,6 +35,20 @@ internal sealed class BakedColumn
     public bool IsUntrimmed { get; }
 }
 
+// A table as used by one query: its schema facts plus the alias this particular
+// instance carries. Two instances of the same table differ only by alias.
+internal sealed class BakedTable
+{
+    public BakedTable(TableFactsModel facts, string alias)
+    {
+        Facts = facts;
+        Alias = alias;
+    }
+
+    public TableFactsModel Facts { get; }
+    public string Alias { get; }
+}
+
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
@@ -56,7 +70,7 @@ internal sealed class BakedCondition
 
 internal sealed class BakedJoin
 {
-    public BakedJoin(bool isLeft, TableFactsModel table, IReadOnlyList<BakedCondition> on)
+    public BakedJoin(bool isLeft, BakedTable table, IReadOnlyList<BakedCondition> on)
     {
         IsLeft = isLeft;
         Table = table;
@@ -64,7 +78,7 @@ internal sealed class BakedJoin
     }
 
     public bool IsLeft { get; }
-    public TableFactsModel Table { get; }
+    public BakedTable Table { get; }
     public IReadOnlyList<BakedCondition> On { get; }
 }
 
@@ -72,7 +86,7 @@ internal sealed class BakedQuerySpec
 {
     public BakedQuerySpec(
         bool isPostgres,
-        TableFactsModel from,
+        BakedTable from,
         IReadOnlyList<BakedJoin> joins,
         IReadOnlyList<BakedColumn> select,
         bool distinct,
@@ -93,7 +107,7 @@ internal sealed class BakedQuerySpec
     }
 
     public bool IsPostgres { get; }
-    public TableFactsModel From { get; }
+    public BakedTable From { get; }
     public IReadOnlyList<BakedJoin> Joins { get; }
     public IReadOnlyList<BakedColumn> Select { get; }
     public bool Distinct { get; }
@@ -205,11 +219,11 @@ internal static class BakedSqlEmitter
         return $"{left} = {placeholder}";
     }
 
-    private static string Table(BakedQuerySpec spec, TableFactsModel table)
+    private static string Table(BakedQuerySpec spec, BakedTable table)
     {
-        var name = table.Schema is null
-            ? Quote(spec, table.TableName)
-            : $"{Quote(spec, table.Schema)}.{Quote(spec, table.TableName)}";
+        var name = table.Facts.Schema is null
+            ? Quote(spec, table.Facts.TableName)
+            : $"{Quote(spec, table.Facts.Schema)}.{Quote(spec, table.Facts.TableName)}";
         return $"{name} AS {Quote(spec, table.Alias)}";
     }
 

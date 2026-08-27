@@ -906,4 +906,216 @@ public sealed class ProjectionGeneratorTests
         Assert.Contains("FROM [person] AS [a]", generated, StringComparison.Ordinal);
         Assert.DoesNotContain("[a].[person]", generated, StringComparison.Ordinal);
     }
+
+    private const string LookupTables = """
+        using Mizzle.SqlServer;
+
+        namespace Demo;
+
+        public sealed class Folks : SqlTable<Folks>
+        {
+            public Folks() : base("person", alias: "a") { }
+            public SqlColumn<System.Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
+            public SqlColumn<System.Guid> LanguageId { get; } = UniqueIdentifier("language_id");
+            public SqlColumn<System.Guid> ContactPrefId { get; } = UniqueIdentifier("contact_pref_id");
+        }
+
+        public sealed class Lookups : SqlTable<Lookups>
+        {
+            public Lookups() : base("mstr_lists", alias: "c") { }
+            public SqlColumn<System.Guid> ItemId { get; } = UniqueIdentifier("mstr_list_item_id");
+            public SqlColumn<string> ItemDesc { get; } = VarChar("mstr_list_item_desc", 50);
+            public SqlColumn<string> ListType { get; } = VarChar("mstr_list_type", 30);
+        }
+
+        // The same lookup table under two aliases, declared once in a holder.
+        internal static class Ehr
+        {
+            public static readonly Folks Person = new();
+            public static readonly Lookups Language = new Lookups().WithAlias("lang");
+            public static readonly Lookups ContactPref = new Lookups().WithAlias("cpref");
+        }
+        """;
+
+    [Fact]
+    public void WithAlias_joins_the_same_lookup_table_twice()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record LookupRow(Guid PersonId, string? LanguageDescription, string? ContactPrefDescription);
+
+            public static class LookupQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    var rows = await db.Select(
+                            Ehr.Person.PersonId,
+                            Ehr.Language.ItemDesc.As("LanguageDescription"),
+                            Ehr.ContactPref.ItemDesc.As("ContactPrefDescription"))
+                        .From(Ehr.Person)
+                        .LeftJoin(Ehr.Language).On(
+                            Ehr.Person.LanguageId.Eq(Ehr.Language.ItemId),
+                            Ehr.Language.ListType.Eq("language"))
+                        .LeftJoin(Ehr.ContactPref).On(
+                            Ehr.Person.ContactPrefId.Eq(Ehr.ContactPref.ItemId),
+                            Ehr.ContactPref.ListType.Eq("contact_pref"))
+                        .ToListAsync<LookupRow>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(LookupTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("[lang].[mstr_list_item_desc] AS [LanguageDescription]", generated, StringComparison.Ordinal);
+        Assert.Contains("[cpref].[mstr_list_item_desc] AS [ContactPrefDescription]", generated, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN [mstr_lists] AS [lang]", generated, StringComparison.Ordinal);
+        Assert.Contains("LEFT JOIN [mstr_lists] AS [cpref]", generated, StringComparison.Ordinal);
+        // The declared alias is untouched where no override is given.
+        Assert.Contains("FROM [person] AS [a]", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithAlias_works_on_a_local_variable_too()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record SelfRow(Guid PersonId, string? Other);
+
+            public static class SelfQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    var person = new Folks();
+                    var lang = new Lookups().WithAlias("lang");
+                    var rows = await db.Select(person.PersonId, lang.ItemDesc.As("Other"))
+                        .From(person)
+                        .LeftJoin(lang).On(person.LanguageId.Eq(lang.ItemId))
+                        .ToListAsync<SelfRow>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(LookupTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("LEFT JOIN [mstr_lists] AS [lang]", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Non_literal_WithAlias_falls_back_to_runtime()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record DynRow2(Guid PersonId);
+
+            public static class DynAliasQ2
+            {
+                public static string Name = "lang";
+
+                public static async Task Run(SqlDb db)
+                {
+                    var person = new Folks();
+                    var lang = new Lookups().WithAlias(Name);
+                    var rows = await db.Select(person.PersonId)
+                        .From(person)
+                        .LeftJoin(lang).On(person.LanguageId.Eq(lang.ItemId))
+                        .ToListAsync<DynRow2>();
+                }
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(LookupTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain("DynRow2IntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Two_instances_sharing_an_alias_report_MIZ011()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record DupAliasRow(Guid PersonId);
+
+            public static class DupAliasQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    // Both carry the declared alias "c" -- previously emitted
+                    // JOIN [mstr_lists] AS [c] twice and failed at the database.
+                    var first = new Lookups();
+                    var second = new Lookups();
+                    var person = new Folks();
+                    var rows = await db.Select(person.PersonId)
+                        .From(person)
+                        .LeftJoin(first).On(person.LanguageId.Eq(first.ItemId))
+                        .LeftJoin(second).On(person.ContactPrefId.Eq(second.ItemId))
+                        .ToListAsync<DupAliasRow>();
+                }
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(LookupTables, callSite);
+        var diagnostic = Assert.Single(result.Diagnostics, d => d.Id == "MIZ011");
+        Assert.Contains("'c'", diagnostic.GetMessage(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Self_join_with_distinct_aliases_is_accepted()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record SelfJoinRow(Guid PersonId);
+
+            public static class SelfJoinQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    var person = new Folks();
+                    var supervisor = new Folks().WithAlias("sup");
+                    var rows = await db.Select(person.PersonId)
+                        .From(person)
+                        .InnerJoin(supervisor).On(person.LanguageId.Eq(supervisor.PersonId))
+                        .ToListAsync<SelfJoinRow>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(LookupTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("INNER JOIN [person] AS [sup]", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
 }

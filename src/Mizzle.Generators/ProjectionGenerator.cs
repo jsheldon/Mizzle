@@ -54,6 +54,14 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    internal static readonly DiagnosticDescriptor DuplicateTableAlias = new(
+        "MIZ011",
+        "Two tables in one query share an alias",
+        "Alias '{0}' is used by more than one table in this query; give one of them a distinct alias with WithAlias(...)",
+        "Mizzle",
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     internal static readonly DiagnosticDescriptor MemberTypeMismatch = new(
         "MIZ010",
         "Selected column type does not match member type",
@@ -65,6 +73,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
     private static readonly Dictionary<string, DiagnosticDescriptor> Descriptors = new()
     {
         ["MIZ010"] = MemberTypeMismatch,
+        ["MIZ011"] = DuplicateTableAlias,
         ["MIZ003"] = NoTargetMember,
         ["MIZ004"] = RequiredMemberUnfilled,
         ["MIZ005"] = NullableIntoNonNullable,
@@ -156,6 +165,17 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         MapperPlan? mapperPlan = null;
         var errors = new List<(string Id, string[] Args)>();
+
+        // Two instances of one table under the same alias emit SQL the database
+        // rejects. Catch it here rather than at runtime.
+        var aliases = new List<string> { spec.From.Alias };
+        aliases.AddRange(spec.Joins.Select(j => j.Table.Alias));
+        var duplicate = aliases.GroupBy(a => a).FirstOrDefault(g => g.Count() > 1);
+        if (duplicate is not null)
+        {
+            errors.Add(("MIZ011", [duplicate.Key]));
+        }
+
         if (bound is not null)
         {
             mapperPlan = BuildMapPlan(bound, spec, model.Compilation, errors);

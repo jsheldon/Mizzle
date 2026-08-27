@@ -18,13 +18,40 @@ public abstract class Table<TSelf> : ITable
     public string Name { get; }
     public string? Schema { get; }
     public abstract DialectKind Dialect { get; }
-    public string Alias { get; }
+    public string Alias { get; private set; }
 
     public IReadOnlyList<IColumn> Columns { get; private set; } = [];
 
     public IReadOnlyList<TableConstraint> Constraints { get; }
 
     public FromSource ToFrom() => new(Name, Schema, Alias);
+
+    // A second instance of the same table under a different alias, so one query
+    // can join it more than once (lookup tables, self-joins). Returns a new
+    // instance -- the original keeps its declared alias and stays shareable.
+    // Requires TSelf to have a parameterless constructor.
+    public TSelf WithAlias(string alias)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+        {
+            throw new ArgumentException("Alias must be a non-empty string.", nameof(alias));
+        }
+
+        TSelf copy;
+        try
+        {
+            copy = (TSelf)Activator.CreateInstance(typeof(TSelf), nonPublic: true)!;
+        }
+        catch (MissingMethodException e)
+        {
+            throw new InvalidOperationException(
+                $"{typeof(TSelf).Name} needs a parameterless constructor for WithAlias.", e);
+        }
+
+        copy.Alias = alias;
+        copy.BindColumns();
+        return copy;
+    }
 
     protected virtual IEnumerable<TableConstraint> DefineConstraints() => [];
 

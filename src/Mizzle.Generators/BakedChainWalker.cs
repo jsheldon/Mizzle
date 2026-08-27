@@ -246,7 +246,7 @@ internal static class BakedChainWalker
 
         public Dictionary<ISymbol, TableFactsModel> Tables { get; } = new(SymbolEqualityComparer.Default);
         public bool HasReportedColumnError { get; private set; }
-        public TableFactsModel? From { get; set; }
+        public BakedTable? From { get; set; }
         public List<BakedJoin> Joins { get; } = [];
         public List<BakedColumn> Select { get; } = [];
         public List<BakedCondition> Where { get; } = [];
@@ -255,10 +255,70 @@ internal static class BakedChainWalker
         public int? Offset { get; set; }
         public bool Distinct { get; set; }
 
-        public TableFactsModel? ResolveTable(ExpressionSyntax expression)
-            => _model.GetTypeInfo(expression).Type is INamedTypeSymbol type
-                ? ResolveTableBySymbol(type)
+        // A table as written at the query site: its facts, plus whichever alias
+        // this instance carries. Null when the chain cannot be baked.
+        public BakedTable? ResolveTable(ExpressionSyntax expression)
+        {
+            if (_model.GetTypeInfo(expression).Type is not INamedTypeSymbol type
+                || ResolveTableBySymbol(type) is not { } facts)
+            {
+                return null;
+            }
+
+            return TryResolveInstanceAlias(expression, out var alias)
+                ? new BakedTable(facts, alias ?? facts.Alias)
                 : null;
+        }
+
+        // var x = new T().WithAlias("q");  or  static readonly T X = new T().WithAlias("q");
+        // Reads the alias off the instance's own declaration, so a local and a
+        // static field behave identically. Returns false when a WithAlias is
+        // present but its argument is not a literal -- the chain then falls back
+        // to the runtime path rather than baking a wrong alias.
+        public bool TryResolveInstanceAlias(ExpressionSyntax receiver, out string? alias)
+        {
+            alias = null;
+            var symbol = _model.GetSymbolInfo(receiver).Symbol;
+            if (symbol is not (ILocalSymbol or IFieldSymbol or IPropertySymbol))
+            {
+                return true;
+            }
+
+            foreach (var syntaxRef in symbol.DeclaringSyntaxReferences)
+            {
+                var initializer = syntaxRef.GetSyntax() switch
+                {
+                    VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+                    PropertyDeclarationSyntax property => property.Initializer?.Value,
+                    _ => null
+                };
+
+                for (var call = initializer as InvocationExpressionSyntax; call is not null;)
+                {
+                    if (call.Expression is not MemberAccessExpressionSyntax member)
+                    {
+                        break;
+                    }
+
+                    if (member.Name.Identifier.Text == "WithAlias")
+                    {
+                        if (call.ArgumentList.Arguments.Count != 1
+                            || call.ArgumentList.Arguments[0].Expression is not LiteralExpressionSyntax literal
+                            || !literal.IsKind(SyntaxKind.StringLiteralExpression))
+                        {
+                            return false;
+                        }
+
+                        alias = literal.Token.ValueText;
+                        return true;
+                    }
+
+                    call = member.Expression as InvocationExpressionSyntax;
+                }
+            }
+
+            return true;
+        }
 
         // t.Col -> (table facts, column fact) as a BakedColumn.
         public BakedColumn? ResolveColumn(ExpressionSyntax expression)
@@ -293,10 +353,17 @@ internal static class BakedChainWalker
                 return null;
             }
 
+            // The alias belongs to the instance the column was reached through,
+            // not to the table type -- two instances differ only by alias.
+            if (!TryResolveInstanceAlias(((MemberAccessExpressionSyntax)expression).Expression, out var instanceAlias))
+            {
+                return null;
+            }
+
             var fact = facts.Columns.FirstOrDefault(c => c.PropertyName == property.Name);
             return fact is null
                 ? null
-                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter, projectionName, fact.IsUntrimmed);
+                : new BakedColumn(instanceAlias ?? facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter, projectionName, fact.IsUntrimmed);
         }
 
         // X.Eq(Y): column vs column, or column vs runtime bind.

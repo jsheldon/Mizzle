@@ -141,6 +141,23 @@ SQL alias: `SELECT [a].[person_id] AS [PatientId]`. The existing projection
 diagnostics report the aliased name, so a typo is `MIZ003` and a type mismatch
 is `MIZ010`, both pointing at your call site.
 
+One table can appear in a query more than once -- a lookup table joined for
+several coded fields, or a self-join. Each instance needs its own alias:
+
+```csharp
+internal static class Ehr
+{
+    public static readonly Persons   Person      = new();
+    public static readonly MstrLists Language    = new MstrLists().WithAlias("lang");
+    public static readonly MstrLists ContactPref = new MstrLists().WithAlias("cpref");
+}
+```
+
+`WithAlias` returns a new instance, so the original keeps its declared alias and
+stays shareable. It works the same on a local variable. Two tables sharing an
+alias in one query is a build error (`MIZ011`) rather than SQL the database
+rejects.
+
 Legacy schemas often store blank-padded `CHAR`. Opt the whole compilation into
 trimming string reads:
 
