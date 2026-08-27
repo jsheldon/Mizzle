@@ -66,11 +66,21 @@ public sealed class SelectBuilder
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 
+    public SelectBuilder From(ITable table) => From(table.ToFrom());
+
     public SelectBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
     public SelectBuilder Where(IColumn column, object? value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), new ValueExpr(value, column.ClrType)));
+
+    public SelectBuilder Where(params Expr[] conditions)
+        => conditions.Length switch
+        {
+            0 => throw new ArgumentException("At least one condition is required.", nameof(conditions)),
+            1 => Where(conditions[0]),
+            _ => Where(Sql.And(conditions))
+        };
 
     public SelectBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
@@ -79,16 +89,24 @@ public sealed class SelectBuilder
 
     public SelectBuilder InnerJoin(ITable target, Expr on) => InnerJoin(target.ToFrom(), on);
 
+    public JoinBuilder InnerJoin(ITable target) => new(this, JoinKind.Inner, target.ToFrom());
+
     public SelectBuilder LeftJoin(FromSource target, Expr on)
         => Copy(joins: [.._joins, new JoinClause(JoinKind.Left, target, on)]);
 
     public SelectBuilder LeftJoin(ITable target, Expr on) => LeftJoin(target.ToFrom(), on);
 
+    public JoinBuilder LeftJoin(ITable target) => new(this, JoinKind.Left, target.ToFrom());
+
     public SelectBuilder OrderBy(Expr expr)
         => Copy(orderBy: [.._orderBy, new OrderByItem(expr, false)]);
 
+    public SelectBuilder OrderBy(IColumn column) => OrderBy(column.ToRef());
+
     public SelectBuilder OrderByDesc(Expr expr)
         => Copy(orderBy: [.._orderBy, new OrderByItem(expr, true)]);
+
+    public SelectBuilder OrderByDesc(IColumn column) => OrderByDesc(column.ToRef());
 
     public SelectBuilder Distinct() => Copy(distinct: true);
 

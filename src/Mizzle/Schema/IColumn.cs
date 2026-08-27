@@ -10,7 +10,7 @@ public interface IColumn
     string? TableAlias { get; }
     bool IsVersion { get; }
     bool IsPrimaryKey { get; }
-    bool IsNotNull { get; }
+    bool IsRequired { get; }
     bool IsUnique { get; }
     bool HasDefault { get; }
     object? DefaultValue { get; }

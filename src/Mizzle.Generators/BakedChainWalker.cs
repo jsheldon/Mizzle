@@ -5,8 +5,15 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Mizzle.Generators;
 
 // Reconstructs a BakedQuerySpec from a statically-visible fluent chain:
-//   db.Select(t.Col, ...).From(t.ToFrom())[.Where(t.Col, value)][.OrderBy(t.Col.ToRef())...]
-//     [.Limit(<literal>)][.Offset(<literal>)][.Distinct()].ToListAsync(map[, ct])
+//   db.Select(t.Col, u.Col, ...)
+//     .From(t) | .From(t.ToFrom())
+//     [.InnerJoin(u).On(cond, ...)] [.LeftJoin(u).On(cond, ...)]
+//     [.InnerJoin(u, cond)] [.LeftJoin(u, cond)]           (legacy forms)
+//     [.Where(cond, ...)] [.Where(t.Col, value)]           (repeatable, AND-combined)
+//     [.OrderBy(t.Col)] [.OrderByDesc(t.Col)] [.OrderBy(t.Col.ToRef())]
+//     [.Distinct()] [.Limit(<literal>)] [.Offset(<literal>)]
+//     .ToListAsync(...)
+// Conditions must be X.Eq(Y): column-vs-column or column-vs-runtime-bind.
 // Returns null for anything the generator cannot prove at compile time.
 internal static class BakedChainWalker
 {
@@ -43,39 +50,7 @@ internal static class BakedChainWalker
         }
 
         calls.Reverse();
-        INamedTypeSymbol? tableType = null;
-        var selectProps = new List<string>();
-        var orderBy = new List<(string Prop, bool Desc)>();
-        string? whereProp = null;
-        int? limit = null;
-        int? offset = null;
-        var distinct = false;
-        var sawFrom = false;
-
-        bool TryColumnProperty(ExpressionSyntax expr, out string propertyName)
-        {
-            propertyName = "";
-            if (expr is not MemberAccessExpressionSyntax
-                || model.GetSymbolInfo(expr).Symbol is not IPropertySymbol property
-                || property.Type is not INamedTypeSymbol propertyType
-                || !TableFacts.TryColumn(propertyType, out _, out _))
-            {
-                return false;
-            }
-
-            if (tableType is null)
-            {
-                tableType = property.ContainingType;
-            }
-            else if (!SymbolEqualityComparer.Default.Equals(tableType, property.ContainingType))
-            {
-                return false;
-            }
-
-            propertyName = property.Name;
-            return true;
-        }
-
+        var state = new WalkState(model);
         for (var i = 0; i < calls.Count; i++)
         {
             var (name, invocation) = calls[i];
@@ -85,116 +60,152 @@ internal static class BakedChainWalker
                 case "Select" when i == 0 && args.Count > 0:
                     foreach (var arg in args)
                     {
-                        if (!TryColumnProperty(arg.Expression, out var prop))
+                        if (state.ResolveColumn(arg.Expression) is not { } column)
                         {
                             return null;
                         }
 
-                        selectProps.Add(prop);
+                        state.Select.Add(column);
                     }
 
                     break;
-                case "From" when args.Count == 1 && !sawFrom:
-                    if (args[0].Expression is not InvocationExpressionSyntax fromCall
-                        || fromCall.Expression is not MemberAccessExpressionSyntax { Name.Identifier.Text: "ToFrom" } fromMember
-                        || tableType is null
-                        || !SymbolEqualityComparer.Default.Equals(model.GetTypeInfo(fromMember.Expression).Type, tableType))
+                case "From" when args.Count == 1 && state.From is null:
+                    if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } fromTable)
                     {
                         return null;
                     }
 
-                    sawFrom = true;
+                    state.From = fromTable;
                     break;
-                case "Where" when args.Count == 2 && whereProp is null:
-                    if (model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol whereMethod
-                        || whereMethod.Parameters.Length != 2
-                        || whereMethod.Parameters[0].Type.Name != "IColumn"
-                        || !TryColumnProperty(args[0].Expression, out var whereColumn))
+                case "InnerJoin" or "LeftJoin" when args.Count == 1 && state.ResolveTable(args[0].Expression) is { } joinTable:
+                    // JoinBuilder form: the next chain call must be On(...)
+                    if (i + 1 >= calls.Count || calls[i + 1].Name != "On")
                     {
                         return null;
                     }
 
-                    whereProp = whereColumn;
+                    var onArgs = calls[i + 1].Invocation.ArgumentList.Arguments;
+                    if (onArgs.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    var conditions = new List<BakedCondition>();
+                    foreach (var onArg in onArgs)
+                    {
+                        if (state.ResolveCondition(onArg.Expression) is not { } condition)
+                        {
+                            return null;
+                        }
+
+                        conditions.Add(condition);
+                    }
+
+                    state.Joins.Add(new BakedJoin(name == "LeftJoin", joinTable, conditions));
+                    i++; // consume the On call
+                    break;
+                case "InnerJoin" or "LeftJoin" when args.Count == 2:
+                    if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } legacyTable)
+                    {
+                        return null;
+                    }
+
+                    var legacyConditions = new List<BakedCondition>();
+                    if (!state.TryFlattenConditions(args[1].Expression, legacyConditions))
+                    {
+                        return null;
+                    }
+
+                    state.Joins.Add(new BakedJoin(name == "LeftJoin", legacyTable, legacyConditions));
+                    break;
+                case "Where" when args.Count == 2
+                    && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
+                    && whereMethod.Parameters[0].Type.Name == "IColumn":
+                    if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
+                    {
+                        return null;
+                    }
+
+                    state.Where.Add(new BakedCondition(whereColumn.TableAlias, whereColumn.DbName, null, null));
+                    break;
+                case "Where" when args.Count >= 1:
+                    foreach (var arg in args)
+                    {
+                        if (state.ResolveCondition(arg.Expression) is not { } condition)
+                        {
+                            return null;
+                        }
+
+                        state.Where.Add(condition);
+                    }
+
                     break;
                 case "OrderBy" or "OrderByDesc" when args.Count == 1:
-                    if (args[0].Expression is not InvocationExpressionSyntax toRefCall
-                        || toRefCall.Expression is not MemberAccessExpressionSyntax { Name.Identifier.Text: "ToRef" } toRefMember
-                        || !TryColumnProperty(toRefMember.Expression, out var orderColumn))
+                    var orderExpr = args[0].Expression is InvocationExpressionSyntax
+                        {
+                            Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "ToRef" } toRefMember
+                        }
+                        ? toRefMember.Expression
+                        : args[0].Expression;
+                    if (state.ResolveColumn(orderExpr) is not { } orderColumn)
                     {
                         return null;
                     }
 
-                    orderBy.Add((orderColumn, name == "OrderByDesc"));
+                    state.OrderBy.Add((orderColumn.TableAlias, orderColumn.DbName, name == "OrderByDesc"));
                     break;
-                case "Limit" when args.Count == 1 && limit is null && TryIntLiteral(args[0].Expression, out var limitValue):
-                    limit = limitValue;
+                case "Limit" when args.Count == 1 && state.Limit is null && TryIntLiteral(args[0].Expression, out var limitValue):
+                    state.Limit = limitValue;
                     break;
-                case "Offset" when args.Count == 1 && offset is null && TryIntLiteral(args[0].Expression, out var offsetValue):
-                    offset = offsetValue;
+                case "Offset" when args.Count == 1 && state.Offset is null && TryIntLiteral(args[0].Expression, out var offsetValue):
+                    state.Offset = offsetValue;
                     break;
                 case "Distinct" when args.Count == 0:
-                    distinct = true;
+                    state.Distinct = true;
                     break;
                 default:
                     return null;
             }
         }
 
-        if (tableType is null || selectProps.Count == 0 || !sawFrom)
+        if (state.From is null || state.Select.Count == 0)
         {
             return null;
         }
 
-        var facts = TableFacts.FromSymbol(tableType);
-        if (facts is null || facts.IsPostgres != isPostgres.Value)
+        // Every referenced table must share the receiver's dialect.
+        if (state.Tables.Values.Any(t => t.IsPostgres != isPostgres.Value))
         {
             return null;
         }
 
-        var dbNames = new Dictionary<string, string>();
-        foreach (var column in facts.Columns)
-        {
-            dbNames[column.PropertyName] = column.DbName;
-        }
-
-        var selectDbNames = new List<string>();
-        foreach (var prop in selectProps)
-        {
-            if (!dbNames.TryGetValue(prop, out var dbName))
-            {
-                return null;
-            }
-
-            selectDbNames.Add(dbName);
-        }
-
-        string? whereDbName = null;
-        if (whereProp is not null && !dbNames.TryGetValue(whereProp, out whereDbName))
-        {
-            return null;
-        }
-
-        var orderByDb = new List<(string DbName, bool Desc)>();
-        foreach (var (prop, desc) in orderBy)
-        {
-            if (!dbNames.TryGetValue(prop, out var dbName))
-            {
-                return null;
-            }
-
-            orderByDb.Add((dbName, desc));
-        }
+        // Left-joined tables' columns are nullable in the projection.
+        var leftAliases = new HashSet<string>(state.Joins.Where(j => j.IsLeft).Select(j => j.Table.Alias));
+        var select = state.Select
+            .Select(c => leftAliases.Contains(c.TableAlias)
+                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall)
+                : c)
+            .ToList();
 
         return new BakedQuerySpec(
             isPostgres.Value,
-            facts,
-            selectDbNames,
-            distinct,
-            whereDbName,
-            orderByDb,
-            limit,
-            offset);
+            state.From,
+            state.Joins,
+            select,
+            state.Distinct,
+            state.Where,
+            state.OrderBy,
+            state.Limit,
+            state.Offset);
     }
+
+    private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
+        => expression is InvocationExpressionSyntax
+            {
+                Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "ToFrom" } member
+            }
+            ? member.Expression
+            : expression;
 
     private static bool TryIntLiteral(ExpressionSyntax expression, out int value)
     {
@@ -208,5 +219,136 @@ internal static class BakedChainWalker
         }
 
         return false;
+    }
+
+    private sealed class WalkState
+    {
+        private readonly SemanticModel _model;
+
+        public WalkState(SemanticModel model) => _model = model;
+
+        public Dictionary<ISymbol, TableFactsModel> Tables { get; } = new(SymbolEqualityComparer.Default);
+        public TableFactsModel? From { get; set; }
+        public List<BakedJoin> Joins { get; } = [];
+        public List<BakedColumn> Select { get; } = [];
+        public List<BakedCondition> Where { get; } = [];
+        public List<(string Alias, string DbName, bool Desc)> OrderBy { get; } = [];
+        public int? Limit { get; set; }
+        public int? Offset { get; set; }
+        public bool Distinct { get; set; }
+
+        public TableFactsModel? ResolveTable(ExpressionSyntax expression)
+        {
+            if (_model.GetTypeInfo(expression).Type is not INamedTypeSymbol type)
+            {
+                return null;
+            }
+
+            if (Tables.TryGetValue(type, out var known))
+            {
+                return known;
+            }
+
+            var facts = TableFacts.FromSymbol(type);
+            if (facts is null)
+            {
+                return null;
+            }
+
+            Tables[type] = facts;
+            return facts;
+        }
+
+        // t.Col -> (table facts, column fact) as a BakedColumn.
+        public BakedColumn? ResolveColumn(ExpressionSyntax expression)
+        {
+            if (expression is not MemberAccessExpressionSyntax
+                || _model.GetSymbolInfo(expression).Symbol is not IPropertySymbol property
+                || property.Type is not INamedTypeSymbol propertyType
+                || !TableFacts.TryColumn(propertyType, out _, out _))
+            {
+                return null;
+            }
+
+            if (ResolveTableBySymbol(property.ContainingType) is not { } facts)
+            {
+                return null;
+            }
+
+            var fact = facts.Columns.FirstOrDefault(c => c.PropertyName == property.Name);
+            return fact is null
+                ? null
+                : new BakedColumn(facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall);
+        }
+
+        // X.Eq(Y): column vs column, or column vs runtime bind.
+        public BakedCondition? ResolveCondition(ExpressionSyntax expression)
+        {
+            if (expression is not InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Eq" } eqMember,
+                    ArgumentList.Arguments: { Count: 1 } eqArgs
+                })
+            {
+                return null;
+            }
+
+            if (ResolveColumn(eqMember.Expression) is not { } left)
+            {
+                return null;
+            }
+
+            var right = ResolveColumn(eqArgs[0].Expression);
+            return right is null
+                ? new BakedCondition(left.TableAlias, left.DbName, null, null)
+                : new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName);
+        }
+
+        // Flattens Sql.And(...) trees in a legacy join's single Expr argument.
+        public bool TryFlattenConditions(ExpressionSyntax expression, List<BakedCondition> into)
+        {
+            if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "And" } andMember
+                } andCall
+                && _model.GetSymbolInfo(andCall).Symbol is IMethodSymbol { ContainingType.Name: "Sql" }
+                && andMember.Expression is IdentifierNameSyntax or MemberAccessExpressionSyntax)
+            {
+                foreach (var arg in andCall.ArgumentList.Arguments)
+                {
+                    if (!TryFlattenConditions(arg.Expression, into))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            if (ResolveCondition(expression) is { } condition)
+            {
+                into.Add(condition);
+                return true;
+            }
+
+            return false;
+        }
+
+        private TableFactsModel? ResolveTableBySymbol(INamedTypeSymbol type)
+        {
+            if (Tables.TryGetValue(type, out var known))
+            {
+                return known;
+            }
+
+            var facts = TableFacts.FromSymbol(type);
+            if (facts is null)
+            {
+                return null;
+            }
+
+            Tables[type] = facts;
+            return facts;
+        }
     }
 }

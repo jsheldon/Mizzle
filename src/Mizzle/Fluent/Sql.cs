@@ -14,7 +14,27 @@ public static class Sql
 
     public static BinaryExpr And(Expr left, Expr right) => new(BinaryOp.And, left, right);
 
+    public static BinaryExpr And(params Expr[] conditions) => Fold(BinaryOp.And, conditions);
+
     public static BinaryExpr Or(Expr left, Expr right) => new(BinaryOp.Or, left, right);
+
+    public static BinaryExpr Or(params Expr[] conditions) => Fold(BinaryOp.Or, conditions);
+
+    private static BinaryExpr Fold(BinaryOp op, Expr[] conditions)
+    {
+        if (conditions.Length < 2)
+        {
+            throw new ArgumentException("At least two conditions are required.", nameof(conditions));
+        }
+
+        var result = new BinaryExpr(op, conditions[0], conditions[1]);
+        for (var i = 2; i < conditions.Length; i++)
+        {
+            result = new BinaryExpr(op, result, conditions[i]);
+        }
+
+        return result;
+    }
 
     public static UnaryExpr Not(Expr operand) => new(UnaryOp.Not, operand);
 

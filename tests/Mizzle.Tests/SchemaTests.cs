@@ -49,9 +49,9 @@ public sealed class SchemaTests
     {
         var users = new Users();
         Assert.True(users.Id.IsPrimaryKey);
-        Assert.True(users.Email.IsNotNull);
+        Assert.True(users.Email.IsRequired);
         Assert.True(users.Email.IsUnique);
-        Assert.False(users.Id.IsNotNull);
+        Assert.False(users.Id.IsRequired);
     }
 
     [Fact]

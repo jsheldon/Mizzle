@@ -24,16 +24,25 @@ internal sealed class TableFactsModel
 
 internal sealed class TableColumnFact
 {
-    public TableColumnFact(string propertyName, string dbName, string clrTypeName)
+    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall)
     {
         PropertyName = propertyName;
         DbName = dbName;
         ClrTypeName = clrTypeName;
+        IsRequired = isRequired;
+        ReaderCall = readerCall;
     }
 
     public string PropertyName { get; }
     public string DbName { get; }
     public string ClrTypeName { get; }
+
+    // NotNull()/PrimaryKey() modifier or Identity factory. Ignores join
+    // semantics — a LeftJoin target's columns are nullable regardless.
+    public bool IsRequired { get; }
+
+    // DbDataReader accessor: GetString / GetGuid / GetFieldValue<...>
+    public string ReaderCall { get; }
 }
 
 internal static class TableFacts
@@ -74,7 +83,11 @@ internal static class TableFacts
                 return null;
             }
 
-            columns.Add(new TableColumnFact(member.Name, dbName, ToCSharpType(clr)));
+            var modifiers = ModifierNames(member);
+            var isRequired = FactoryName(member) == "Identity"
+                || modifiers.Contains("NotNull")
+                || modifiers.Contains("PrimaryKey");
+            columns.Add(new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr)));
         }
 
         if (columns.Count == 0)
@@ -204,6 +217,22 @@ internal static class TableFacts
             ? literal.Token.ValueText
             : null;
     }
+
+    public static string ReaderCall(ITypeSymbol type) => type.SpecialType switch
+    {
+        SpecialType.System_Int32 => "GetInt32",
+        SpecialType.System_String => "GetString",
+        SpecialType.System_Int64 => "GetInt64",
+        SpecialType.System_Boolean => "GetBoolean",
+        SpecialType.System_DateTime => "GetDateTime",
+        SpecialType.System_Double => "GetDouble",
+        SpecialType.System_Decimal => "GetDecimal",
+        SpecialType.System_Int16 => "GetInt16",
+        SpecialType.System_Byte => "GetByte",
+        SpecialType.System_Single => "GetFloat",
+        _ when type.ToDisplayString() == "System.Guid" => "GetGuid",
+        _ => $"GetFieldValue<{type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
+    };
 
     public static string ToCSharpType(ITypeSymbol type) => type.SpecialType switch
     {

@@ -149,21 +149,7 @@ public sealed class SchemaGenerator : IIncrementalGenerator
     private static string ToCSharpType(ITypeSymbol type)
         => TableFacts.ToCSharpType(type);
 
-    private static string ReaderMethod(ITypeSymbol type) => type.SpecialType switch
-    {
-        SpecialType.System_Int32 => "GetInt32",
-        SpecialType.System_String => "GetString",
-        SpecialType.System_Int64 => "GetInt64",
-        SpecialType.System_Boolean => "GetBoolean",
-        SpecialType.System_DateTime => "GetDateTime",
-        SpecialType.System_Double => "GetDouble",
-        SpecialType.System_Decimal => "GetDecimal",
-        SpecialType.System_Int16 => "GetInt16",
-        SpecialType.System_Byte => "GetByte",
-        SpecialType.System_Single => "GetFloat",
-        _ when type.ToDisplayString() == "System.Guid" => "GetGuid",
-        _ => $"GetFieldValue<{type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}>"
-    };
+    private static string ReaderMethod(ITypeSymbol type) => TableFacts.ReaderCall(type);
 
     private static string MemberType(ColumnModel column)
         => column.IsRequired ? column.ClrType : column.ClrType + "?";
