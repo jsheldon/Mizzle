@@ -8,6 +8,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     private readonly PostgreSqlContainer _container = new PostgreSqlBuilder().Build();
 
     public NpgsqlDataSource DataSource { get; private set; } = null!;
+    public string ConnectionString => _container.GetConnectionString();
 
     public async Task InitializeAsync()
     {

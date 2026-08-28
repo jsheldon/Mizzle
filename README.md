@@ -22,6 +22,7 @@ translation, or reflection in the query path.
 | `Mizzle.Postgres` | Postgres schema types, SQL emitter, Npgsql execution, `AddMizzlePostgres` |
 | `Mizzle.SqlServer` | SQL Server schema types, T-SQL emitter, SqlClient execution, `AddMizzleSqlServer` |
 | `Mizzle.Generators` | Source generators: record/mapper generation, compiled query interceptors, Strict-mode analyzer |
+| `Mizzle.Cli` | `dotnet` tool for inspecting databases, scaffolding tables, and explaining query support |
 
 Installing a dialect package brings in everything you need:
 
@@ -275,6 +276,30 @@ non-compilable query into a build error.
   guarantee, not a gap. Check that the current surface covers your needs before
   adopting it.
 - No LINQ / `IQueryable`, no sync APIs, no migrations, no MySQL (yet).
+
+## CLI
+
+`Mizzle.Cli` ships as a .NET tool:
+
+```bash
+dotnet tool install --global Mizzle.Cli --prerelease
+```
+
+The installed command is `mizzle`.
+
+```bash
+mizzle type-map --provider postgres
+mizzle inspect --provider postgres --connection "..." --schema public --all
+mizzle scaffold --provider postgres --connection "..." --schema public --tables users,posts --namespace MyApp.Data --output ./Data/Tables
+mizzle doctor --project ./MyApp.csproj
+mizzle diff --provider postgres --connection "..." --schema public --source ./Data/Tables
+mizzle explain --provider postgres --sql-file ./query.sql
+mizzle translate-query --provider postgres --sql-file ./query.sql
+```
+
+The CLI stops on unsupported database types or SQL shapes with `MZCLI###`
+messages. That is intentional: it should point at what Mizzle needs to learn
+next, not generate code that quietly guesses.
 
 ## Building
 

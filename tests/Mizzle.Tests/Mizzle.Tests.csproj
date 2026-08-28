@@ -31,6 +31,7 @@
     <ProjectReference Include="..\..\src\Mizzle\Mizzle.csproj" />
     <ProjectReference Include="..\..\src\Mizzle.Postgres\Mizzle.Postgres.csproj" />
     <ProjectReference Include="..\..\src\Mizzle.SqlServer\Mizzle.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Mizzle.Cli\Mizzle.Cli.csproj" />
   </ItemGroup>
 
 </Project>
