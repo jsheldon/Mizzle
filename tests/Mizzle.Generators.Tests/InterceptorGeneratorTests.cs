@@ -132,7 +132,7 @@ public sealed class InterceptorGeneratorTests
     }
 
     [Fact]
-    public void Non_eq_where_condition_is_not_baked()
+    public void Non_eq_where_condition_is_baked()
     {
         const string site = """
             using System.Threading.Tasks;
@@ -150,8 +150,11 @@ public sealed class InterceptorGeneratorTests
                 }
             }
             """;
+        // Comparison operators other than Eq used to take a query off the baked
+        // path; they now emit their own operator.
         var generated = RunGenerator(JoinTables, site);
-        Assert.DoesNotContain("InterceptsLocation", generated, StringComparison.Ordinal);
+        Assert.Contains("InterceptsLocation", generated, StringComparison.Ordinal);
+        Assert.Contains("display_name", generated, StringComparison.Ordinal);
     }
 
     [Fact]

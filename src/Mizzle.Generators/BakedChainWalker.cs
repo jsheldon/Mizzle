@@ -777,22 +777,52 @@ internal static class BakedChainWalker
         {
             if (expression is not InvocationExpressionSyntax
                 {
-                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Eq" } eqMember,
-                    ArgumentList.Arguments: { Count: 1 } eqArgs
+                    Expression: MemberAccessExpressionSyntax member,
+                    ArgumentList.Arguments: var conditionArgs
                 })
             {
                 return null;
             }
 
-            if (ResolveColumn(eqMember.Expression) is not { } left)
+            // Unary tests take no argument and no bind slot.
+            var unary = member.Name.Identifier.Text switch
+            {
+                "IsNull" => "IS NULL",
+                "IsNotNull" => "IS NOT NULL",
+                _ => null
+            };
+            if (unary is not null && conditionArgs.Count == 0)
+            {
+                return ResolveColumn(member.Expression) is not { } target
+                    ? null
+                    : new BakedCondition(target.TableAlias, target.DbName, null, null, op: unary, isUnary: true);
+            }
+
+            var op = member.Name.Identifier.Text switch
+            {
+                "Eq" => "=",
+                "Ne" => "<>",
+                "Gt" => ">",
+                "Gte" => ">=",
+                "Lt" => "<",
+                "Lte" => "<=",
+                "Like" => "LIKE",
+                _ => null
+            };
+            if (op is null || conditionArgs.Count != 1)
             {
                 return null;
             }
 
-            var right = ResolveColumn(eqArgs[0].Expression);
+            if (ResolveColumn(member.Expression) is not { } left)
+            {
+                return null;
+            }
+
+            var right = ResolveColumn(conditionArgs[0].Expression);
             return right is null
-                ? new BakedCondition(left.TableAlias, left.DbName, null, null)
-                : new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName);
+                ? new BakedCondition(left.TableAlias, left.DbName, null, null, op: op)
+                : new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName, op: op);
         }
 
         // Flattens Sql.And(...) trees in a legacy join's single Expr argument.

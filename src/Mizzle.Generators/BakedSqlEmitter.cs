@@ -65,10 +65,12 @@ internal sealed class BakedTable
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
-    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null)
+    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null, string op = "=", bool isUnary = false)
     {
         LeftExpression = leftExpression;
         ConditionalIndex = conditionalIndex;
+        Op = op;
+        IsUnary = isUnary;
         LeftAlias = leftAlias;
         LeftDbName = leftDbName;
         RightAlias = rightAlias;
@@ -81,6 +83,12 @@ internal sealed class BakedCondition
     // Set for a WhereIf predicate: the bit in the shape mask that decides whether
     // this condition is part of a given variant. Null means always applied.
     public int? ConditionalIndex { get; }
+
+    // The SQL comparison operator, or the trailing form for a unary test.
+    public string Op { get; }
+
+    // IS NULL / IS NOT NULL: no right-hand side at all.
+    public bool IsUnary { get; }
 
     public string LeftAlias { get; }
     public string LeftDbName { get; }
@@ -344,12 +352,17 @@ internal static class BakedSqlEmitter
     private static string Condition(BakedQuerySpec spec, BakedCondition condition, ref int slot)
     {
         var left = condition.LeftExpression ?? Column(spec, condition.LeftAlias, condition.LeftDbName);
-        if (!condition.IsBind)
+        if (condition.IsUnary)
         {
-            return $"{left} = {Column(spec, condition.RightAlias!, condition.RightDbName!)}";
+            return $"{left} {condition.Op}";
         }
 
-        return $"{left} = {Placeholder(spec, ref slot)}";
+        if (!condition.IsBind)
+        {
+            return $"{left} {condition.Op} {Column(spec, condition.RightAlias!, condition.RightDbName!)}";
+        }
+
+        return $"{left} {condition.Op} {Placeholder(spec, ref slot)}";
     }
 
     private static string Table(BakedQuerySpec spec, BakedTable table)

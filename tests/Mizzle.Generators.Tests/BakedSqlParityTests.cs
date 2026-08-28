@@ -283,4 +283,77 @@ public sealed class BakedSqlParityTests
 
         Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
     }
+
+    [Theory]
+    [InlineData("o.Status.Ne(\"open\")", "<> $1")]
+    [InlineData("o.Status.Gt(\"a\")", "> $1")]
+    [InlineData("o.Status.Gte(\"a\")", ">= $1")]
+    [InlineData("o.Status.Lt(\"z\")", "< $1")]
+    [InlineData("o.Status.Lte(\"z\")", "<= $1")]
+    [InlineData("o.Status.Like(\"a%\")", "LIKE $1")]
+    public void Comparison_operators_bake_and_match_the_runtime_emitter(string predicate, string expected)
+    {
+        var baked = BakedSql($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record OpRow(Guid OrderId);
+
+            public static class OpQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId).From(o).Where({{predicate}}).ToListAsync<OpRow>();
+                }
+            }
+            """);
+
+        Assert.Contains(expected, baked, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("IsNull", "IS NULL")]
+    [InlineData("IsNotNull", "IS NOT NULL")]
+    public void Null_tests_bake_and_consume_no_bind_slot(string method, string expected)
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.OrderId)
+            .From(o.ToFrom())
+            .Where(method == "IsNull" ? o.Status.IsNull() : o.Status.IsNotNull())
+            .Where(o.OrderId.Eq(Guid.NewGuid())));
+
+        var baked = BakedSql($$"""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record NullRow(Guid OrderId);
+
+            public static class NullQ
+            {
+                public static async Task Run(PostgresDb db, Guid id)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId).From(o)
+                        .Where(o.Status.{{method}}())
+                        .Where(o.OrderId.Eq(id))
+                        .ToListAsync<NullRow>();
+                }
+            }
+            """);
+
+        Assert.Contains(expected, baked, StringComparison.Ordinal);
+        // The unary test takes no slot, so the following bind is still $1.
+        Assert.Contains("\\\"order_id\\\" = $1", baked, StringComparison.Ordinal);
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
 }
