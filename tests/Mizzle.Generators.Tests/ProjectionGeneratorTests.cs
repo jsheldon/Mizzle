@@ -1147,4 +1147,180 @@ public sealed class ProjectionGeneratorTests
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Contains("INNER JOIN [person] AS [sup]", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
+
+    private const string CteTables = """
+        using Mizzle.Postgres;
+
+        namespace Demo;
+
+        public sealed class Orders : PgTable<Orders>
+        {
+            public Orders() : base("orders", "public") { }
+            public PgColumn<System.Guid> OrderId { get; } = Uuid("order_id").PrimaryKey();
+            public PgColumn<string> Status { get; } = Text("status").NotNull();
+        }
+        """;
+
+    [Fact]
+    public void Cte_body_is_baked_into_the_with_prefix()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record OrderRow(Guid OrderId);
+
+            public static class CteQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId)
+                        .With(CteBuilder.Named("open", db.Select(o.OrderId).From(o).Build()))
+                        .From(o)
+                        .ToListAsync<OrderRow>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(CteTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains(
+            "WITH \\\"open\\\" AS (SELECT \\\"orders\\\".\\\"order_id\\\" FROM \\\"public\\\".\\\"orders\\\" AS \\\"orders\\\") SELECT",
+            generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Recursive_cte_is_baked()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record RecRow(Guid OrderId);
+
+            public static class RecCteQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId)
+                        .WithRecursive(CteBuilder.Named("tree", db.Select(o.OrderId).From(o).Build()))
+                        .From(o)
+                        .ToListAsync<RecRow>();
+                }
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(CteTables, callSite));
+        Assert.Contains("WITH RECURSIVE \\\"tree\\\" AS (", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cte_binds_take_the_lowest_parameter_slots()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record SlotRow(Guid OrderId);
+
+            public static class SlotCteQ
+            {
+                public static async Task Run(PostgresDb db, Guid id)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId)
+                        .With(CteBuilder.Named("open", db.Select(o.OrderId).From(o).Where(o.Status.Eq("open")).Build()))
+                        .From(o)
+                        .Where(o.OrderId.Eq(id))
+                        .ToListAsync<SlotRow>();
+                }
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(CteTables, callSite));
+        // Parameterizer order: CTE binds first ($1), then the outer where ($2).
+        Assert.Contains("\\\"status\\\" = $1", generated, StringComparison.Ordinal);
+        Assert.Contains("\\\"order_id\\\" = $2", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Cte_from_a_local_variable_is_baked()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record LocalRow(Guid OrderId);
+
+            public static class LocalCteQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var body = db.Select(o.OrderId).From(o).Build();
+                    var rows = await db.Select(o.OrderId)
+                        .With(CteBuilder.Named("open", body))
+                        .From(o)
+                        .ToListAsync<LocalRow>();
+                }
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(CteTables, callSite));
+        Assert.Contains("WITH \\\"open\\\" AS (SELECT", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Non_literal_cte_name_falls_back_to_runtime()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record DynCteRow(Guid OrderId);
+
+            public static class DynCteQ
+            {
+                public static string Name = "open";
+
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId)
+                        .With(CteBuilder.Named(Name, db.Select(o.OrderId).From(o).Build()))
+                        .From(o)
+                        .ToListAsync<DynCteRow>();
+                }
+            }
+            """;
+
+        var result = GeneratorTestHost.Run(CteTables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain("DynCteRowIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
 }

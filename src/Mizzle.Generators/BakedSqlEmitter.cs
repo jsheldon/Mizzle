@@ -82,6 +82,19 @@ internal sealed class BakedJoin
     public IReadOnlyList<BakedCondition> On { get; }
 }
 
+// A CTE as written at the query site: its name plus the baked body select.
+internal sealed class BakedCte
+{
+    public BakedCte(string name, BakedQuerySpec body)
+    {
+        Name = name;
+        Body = body;
+    }
+
+    public string Name { get; }
+    public BakedQuerySpec Body { get; }
+}
+
 internal sealed class BakedQuerySpec
 {
     public BakedQuerySpec(
@@ -93,7 +106,9 @@ internal sealed class BakedQuerySpec
         IReadOnlyList<BakedCondition> where,
         IReadOnlyList<(string Alias, string DbName, bool Desc)> orderBy,
         int? limit,
-        int? offset)
+        int? offset,
+        IReadOnlyList<BakedCte> with,
+        bool recursiveWith)
     {
         IsPostgres = isPostgres;
         From = from;
@@ -104,6 +119,8 @@ internal sealed class BakedQuerySpec
         OrderBy = orderBy;
         Limit = limit;
         Offset = offset;
+        With = with;
+        RecursiveWith = recursiveWith;
     }
 
     public bool IsPostgres { get; }
@@ -115,6 +132,8 @@ internal sealed class BakedQuerySpec
     public IReadOnlyList<(string Alias, string DbName, bool Desc)> OrderBy { get; }
     public int? Limit { get; }
     public int? Offset { get; }
+    public IReadOnlyList<BakedCte> With { get; }
+    public bool RecursiveWith { get; }
 }
 
 // Mirrors PgEmitter/SqlServerEmitter output for the statically-visible subset,
@@ -125,13 +144,45 @@ internal static class BakedSqlEmitter
 {
     public static string? Emit(BakedQuerySpec spec)
     {
+        var slot = 0;
+        return Emit(spec, ref slot, includeWith: true);
+    }
+
+    // Parameterizer order for a select is: With CTEs -> select items -> joins ->
+    // where, so a CTE body's binds must take the lowest slots.
+    private static string? Emit(BakedQuerySpec spec, ref int slot, bool includeWith)
+    {
         if (!spec.IsPostgres && (spec.Limit is not null || spec.Offset is not null) && spec.OrderBy.Count == 0)
         {
             return null;
         }
 
-        var slot = 0;
         var sql = new StringBuilder();
+        if (includeWith && spec.With.Count > 0)
+        {
+            sql.Append(spec.RecursiveWith ? "WITH RECURSIVE " : "WITH ");
+            for (var i = 0; i < spec.With.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sql.Append(", ");
+                }
+
+                sql.Append(Quote(spec, spec.With[i].Name));
+                sql.Append(" AS (");
+                var body = Emit(spec.With[i].Body, ref slot, includeWith: false);
+                if (body is null)
+                {
+                    return null;
+                }
+
+                sql.Append(body);
+                sql.Append(')');
+            }
+
+            sql.Append(' ');
+        }
+
         sql.Append("SELECT ");
         if (spec.Distinct)
         {

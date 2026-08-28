@@ -181,6 +181,15 @@ internal static class BakedChainWalker
                     state.Limit = pageSize;
                     state.Offset = (page - 1) * pageSize;
                     break;
+                case "With" or "WithRecursive" when args.Count == 1:
+                    if (state.ResolveCte(args[0].Expression) is not { } cte)
+                    {
+                        return null;
+                    }
+
+                    state.With.Add(cte);
+                    state.RecursiveWith |= name == "WithRecursive";
+                    break;
                 case "Distinct" when args.Count == 0:
                     state.Distinct = true;
                     break;
@@ -217,7 +226,9 @@ internal static class BakedChainWalker
             state.Where,
             state.OrderBy,
             state.Limit,
-            state.Offset);
+            state.Offset,
+            state.With,
+            state.RecursiveWith);
         }
         finally
         {
@@ -260,6 +271,8 @@ internal static class BakedChainWalker
         public List<BakedColumn> Select { get; } = [];
         public List<BakedCondition> Where { get; } = [];
         public List<(string Alias, string DbName, bool Desc)> OrderBy { get; } = [];
+        public List<BakedCte> With { get; } = [];
+        public bool RecursiveWith { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
         public bool Distinct { get; set; }
@@ -327,6 +340,74 @@ internal static class BakedChainWalker
             }
 
             return true;
+        }
+
+        // CteBuilder.Named("name", <select chain>.Build()) -- the body is walked
+        // with the same machinery as the outer query. A non-literal name, or a
+        // body that cannot be baked, makes the whole chain unbakeable.
+        public BakedCte? ResolveCte(ExpressionSyntax expression)
+        {
+            if (expression is not InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Named" },
+                    ArgumentList.Arguments: { Count: 2 } namedArgs
+                })
+            {
+                return null;
+            }
+
+            if (namedArgs[0].Expression is not LiteralExpressionSyntax nameLiteral
+                || !nameLiteral.IsKind(SyntaxKind.StringLiteralExpression))
+            {
+                return null;
+            }
+
+            var bodyExpression = Unwrap(namedArgs[1].Expression);
+            if (ResolveBuildChain(bodyExpression) is not { } buildInvocation)
+            {
+                return null;
+            }
+
+            var body = TryGetSpec(buildInvocation, _model, out _);
+            return body is null ? null : new BakedCte(nameLiteral.Token.ValueText, body);
+        }
+
+        // The CTE body is written inline as db.Select(...)....Build(), or held in
+        // a local/field initialized that way.
+        private InvocationExpressionSyntax? ResolveBuildChain(ExpressionSyntax expression)
+        {
+            if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Build" }
+                } inline)
+            {
+                return inline;
+            }
+
+            if (_model.GetSymbolInfo(expression).Symbol is not (ILocalSymbol or IFieldSymbol))
+            {
+                return null;
+            }
+
+            foreach (var syntaxRef in _model.GetSymbolInfo(expression).Symbol!.DeclaringSyntaxReferences)
+            {
+                var initializer = syntaxRef.GetSyntax() switch
+                {
+                    VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+                    PropertyDeclarationSyntax property => property.Initializer?.Value,
+                    _ => null
+                };
+
+                if (initializer is InvocationExpressionSyntax
+                    {
+                        Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Build" }
+                    } declared)
+                {
+                    return declared;
+                }
+            }
+
+            return null;
         }
 
         // t.Col -> (table facts, column fact) as a BakedColumn.
