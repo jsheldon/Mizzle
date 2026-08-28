@@ -15,9 +15,11 @@ public sealed class InsertBuilder
     private readonly SelectQuery? _fromSelect;
     private readonly EquatableList<SelectItem> _returning;
     private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
+    private readonly EquatableList<CteClause> _with;
+    private readonly bool _recursiveWith;
 
     public InsertBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, executor, overlay, [], [], [], [], null, [], [])
+        : this(table, executor, overlay, [], [], [], [], null, [], [], [], false)
     {
     }
 
@@ -31,7 +33,9 @@ public sealed class InsertBuilder
         EquatableList<string> currentColumns,
         SelectQuery? fromSelect,
         EquatableList<SelectItem> returning,
-        EquatableList<RuntimeProjectionColumn> returningColumns)
+        EquatableList<RuntimeProjectionColumn> returningColumns,
+        EquatableList<CteClause> with,
+        bool recursiveWith)
     {
         _table = table;
         _executor = executor;
@@ -43,6 +47,8 @@ public sealed class InsertBuilder
         _fromSelect = fromSelect;
         _returning = returning;
         _returningColumns = returningColumns;
+        _with = with;
+        _recursiveWith = recursiveWith;
     }
 
     public QueryOptions? Overlay { get; }
@@ -96,6 +102,11 @@ public sealed class InsertBuilder
             returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
             returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
 
+    public InsertBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+
+    public InsertBuilder WithRecursive(CteClause cte)
+        => Copy(with: [.._with, cte], recursiveWith: true);
+
     public InsertBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
     public InsertQuery Build()
@@ -129,7 +140,7 @@ public sealed class InsertBuilder
             throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
         }
 
-        return new InsertQuery(_table.ToFrom(), columns, rows, _fromSelect, _returning, [], false);
+        return new InsertQuery(_table.ToFrom(), columns, rows, _fromSelect, _returning, _with, _recursiveWith);
     }
 
     public Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -204,6 +215,8 @@ public sealed class InsertBuilder
         SelectQuery? fromSelect = null,
         EquatableList<SelectItem>? returning = null,
         EquatableList<RuntimeProjectionColumn>? returningColumns = null,
+        EquatableList<CteClause>? with = null,
+        bool? recursiveWith = null,
         QueryOptions? overlay = null,
         bool resetCurrent = false)
         => new(
@@ -216,5 +229,7 @@ public sealed class InsertBuilder
             resetCurrent ? new EquatableList<string>([]) : currentColumns ?? _currentColumns,
             fromSelect ?? _fromSelect,
             returning ?? _returning,
-            returningColumns ?? _returningColumns);
+            returningColumns ?? _returningColumns,
+            with ?? _with,
+            recursiveWith ?? _recursiveWith);
 }

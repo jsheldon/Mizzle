@@ -10,10 +10,13 @@ public sealed class UpdateBuilder
     private readonly EquatableList<(string Column, Expr Value)> _set;
     private readonly Expr? _where;
     private readonly EquatableList<SelectItem> _returning;
+    private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
+    private readonly EquatableList<CteClause> _with;
+    private readonly bool _recursiveWith;
     private readonly int? _expect;
 
     public UpdateBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, executor, overlay, [], null, [], null)
+        : this(table, executor, overlay, [], null, [], [], [], false, null)
     {
     }
 
@@ -24,6 +27,9 @@ public sealed class UpdateBuilder
         EquatableList<(string Column, Expr Value)> set,
         Expr? where,
         EquatableList<SelectItem> returning,
+        EquatableList<RuntimeProjectionColumn> returningColumns,
+        EquatableList<CteClause> with,
+        bool recursiveWith,
         int? expect)
     {
         _table = table;
@@ -32,6 +38,9 @@ public sealed class UpdateBuilder
         _set = set;
         _where = where;
         _returning = returning;
+        _returningColumns = returningColumns;
+        _with = with;
+        _recursiveWith = recursiveWith;
         _expect = expect;
     }
 
@@ -47,7 +56,14 @@ public sealed class UpdateBuilder
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     public UpdateBuilder Returning(params IColumn[] columns)
-        => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
+        => Copy(
+            returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
+            returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
+
+    public UpdateBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+
+    public UpdateBuilder WithRecursive(CteClause cte)
+        => Copy(with: [.._with, cte], recursiveWith: true);
 
     public UpdateBuilder Expect(int affectedRows) => Copy(expect: affectedRows);
 
@@ -61,7 +77,7 @@ public sealed class UpdateBuilder
             throw new InvalidOperationException("SET is required.");
         }
 
-        return new UpdateQuery(_table.ToFrom(), _set, _where, _returning, [], false);
+        return new UpdateQuery(_table.ToFrom(), _set, _where, _returning, _with, _recursiveWith);
     }
 
     public Task<IReadOnlyList<T>> ToListAsync<T>(
@@ -81,8 +97,62 @@ public sealed class UpdateBuilder
         return affected;
     }
 
+
+    public Task<IReadOnlyList<T>> ToListAsync<T>(CancellationToken cancellationToken = default)
+    {
+        EnsureReturningProjection();
+        return ToListAsync(reader => RuntimeProjectionMapper.Read<T>(_returningColumns, reader), cancellationToken);
+    }
+
+    public async Task<T> FirstAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        if (rows.Count == 0)
+        {
+            throw new InvalidOperationException("Sequence contains no elements.");
+        }
+
+        return rows[0];
+    }
+
+    public async Task<T?> FirstOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count == 0 ? default : rows[0];
+    }
+
+    public async Task<T> SingleAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count switch
+        {
+            0 => throw new InvalidOperationException("Sequence contains no elements."),
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element.")
+        };
+    }
+
+    public async Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count switch
+        {
+            0 => default,
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element.")
+        };
+    }
+
     private IQueryExecutor Executor()
         => _executor ?? throw new InvalidOperationException("This query is not bound to a database.");
+
+    private void EnsureReturningProjection()
+    {
+        if (_returningColumns.Count == 0)
+        {
+            throw new InvalidOperationException("Typed update projection requires Returning(...).");
+        }
+    }
 
     private void EnsureVersionInWhere()
     {
@@ -125,6 +195,9 @@ public sealed class UpdateBuilder
         EquatableList<(string Column, Expr Value)>? set = null,
         Expr? where = null,
         EquatableList<SelectItem>? returning = null,
+        EquatableList<RuntimeProjectionColumn>? returningColumns = null,
+        EquatableList<CteClause>? with = null,
+        bool? recursiveWith = null,
         int? expect = null,
         QueryOptions? overlay = null)
         => new(
@@ -134,5 +207,8 @@ public sealed class UpdateBuilder
             set ?? _set,
             where ?? _where,
             returning ?? _returning,
+            returningColumns ?? _returningColumns,
+            with ?? _with,
+            recursiveWith ?? _recursiveWith,
             expect ?? _expect);
 }
