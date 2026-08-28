@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis.CSharp;
 using Mizzle.Compile;
 using Mizzle.Fluent;
+using Mizzle.Ir;
 using Mizzle.Postgres;
 
 namespace Mizzle.Generators.Tests;
@@ -160,6 +161,121 @@ public sealed class BakedSqlParityTests
                         .LeftJoin(other).On(o.OrderId.Eq(other.OrderId))
                         .Where(o.Status.Eq("open"))
                         .ToListAsync<JoinParityRow>();
+                }
+            }
+            """);
+
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
+    public void Having_bakes_and_matches_the_runtime_emitter()
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.Status, Sql.As(Sql.Count(), "N"))
+            .From(o.ToFrom())
+            .GroupBy(o.Status)
+            .Having(Sql.Eq(Sql.Count(), new ValueExpr(2, typeof(int)))));
+
+        var baked = BakedSql("""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record HavingRow(string Status, long N);
+
+            public static class HavingQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.Status, Sql.As(Sql.Count(), "N"))
+                        .From(o)
+                        .GroupBy(o.Status)
+                        .Having(Sql.Eq(Sql.Count(), Sql.Value(2)))
+                        .ToListAsync<HavingRow>();
+                }
+            }
+            """);
+
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
+    public void Literal_select_item_takes_its_slot_before_the_where_clause()
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.OrderId, Sql.As(Sql.Value(7), "Pri"))
+            .From(o.ToFrom())
+            .Where(o.Status.Eq("open")));
+
+        var baked = BakedSql("""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record LiteralRow(Guid OrderId, int Pri);
+
+            public static class LiteralQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.OrderId, Sql.As(Sql.Value(7), "Pri"))
+                        .From(o)
+                        .Where(o.Status.Eq("open"))
+                        .ToListAsync<LiteralRow>();
+                }
+            }
+            """);
+
+        // Parameterizer order puts select items before where, so the literal is $1.
+        Assert.Contains("$1 AS", baked, StringComparison.Ordinal);
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
+    public void Union_all_bakes_and_matches_the_runtime_emitter()
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.OrderId)
+            .From(o.ToFrom())
+            .Where(o.Status.Eq("open"))
+            .UnionAll(new SelectBuilder()
+                .Select(o.OrderId)
+                .From(o.ToFrom())
+                .Where(o.Status.Eq("closed"))));
+
+        var baked = BakedSql("""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record UnionRow(Guid OrderId);
+
+            public static class UnionQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var closed = db.Select(o.OrderId).From(o).Where(o.Status.Eq("closed"));
+                    var rows = await db.Select(o.OrderId)
+                        .From(o)
+                        .Where(o.Status.Eq("open"))
+                        .UnionAll(closed)
+                        .ToListAsync<UnionRow>();
                 }
             }
             """);

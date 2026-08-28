@@ -28,14 +28,25 @@ internal static class BakedChainWalker
         SemanticModel model,
         out bool hasReportedColumnError)
     {
-        hasReportedColumnError = false;
         if (terminator.Expression is not MemberAccessExpressionSyntax terminatorMember)
         {
+            hasReportedColumnError = false;
             return null;
         }
 
+        return WalkChain(terminatorMember.Expression, model, out hasReportedColumnError);
+    }
+
+    // Walks a builder-valued chain that has no terminator of its own -- a union
+    // branch, or the body behind a Build().
+    public static BakedQuerySpec? WalkChain(
+        ExpressionSyntax chain,
+        SemanticModel model,
+        out bool hasReportedColumnError)
+    {
+        hasReportedColumnError = false;
         var calls = new List<(string Name, InvocationExpressionSyntax Invocation)>();
-        var current = terminatorMember.Expression;
+        var current = chain;
         while (current is InvocationExpressionSyntax invocation)
         {
             if (invocation.Expression is not MemberAccessExpressionSyntax member)
@@ -204,6 +215,22 @@ internal static class BakedChainWalker
                     state.With.Add(cte);
                     state.RecursiveWith |= name == "WithRecursive";
                     break;
+                case "Having" when args.Count == 1:
+                    if (state.ResolveHavingCondition(args[0].Expression) is not { } having)
+                    {
+                        return null;
+                    }
+
+                    state.Having.Add(having);
+                    break;
+                case "UnionAll" when args.Count == 1:
+                    if (state.ResolveUnionBranch(args[0].Expression) is not { } branch)
+                    {
+                        return null;
+                    }
+
+                    state.UnionAll.Add(branch);
+                    break;
                 case "Distinct" when args.Count == 0:
                     state.Distinct = true;
                     break;
@@ -243,7 +270,9 @@ internal static class BakedChainWalker
             state.Offset,
             state.With,
             state.RecursiveWith,
-            state.GroupBy);
+            state.GroupBy,
+            state.Having,
+            state.UnionAll);
         }
         finally
         {
@@ -330,6 +359,8 @@ internal static class BakedChainWalker
         public List<(string Alias, string DbName, bool Desc)> OrderBy { get; } = [];
         public List<BakedCte> With { get; } = [];
         public List<(string Alias, string DbName)> GroupBy { get; } = [];
+        public List<BakedCondition> Having { get; } = [];
+        public List<BakedQuerySpec> UnionAll { get; } = [];
         public bool RecursiveWith { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
@@ -400,11 +431,65 @@ internal static class BakedChainWalker
             return true;
         }
 
+        // Sql.Eq(<aggregate>, <value>) -- the only HAVING shape that bakes today.
+        public BakedCondition? ResolveHavingCondition(ExpressionSyntax expression)
+        {
+            if (expression is not InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Eq" } member,
+                    ArgumentList.Arguments: { Count: 2 } args
+                }
+                || _model.GetSymbolInfo(member).Symbol is not IMethodSymbol { ContainingType.Name: "Sql" })
+            {
+                return null;
+            }
+
+            var left = ResolveAggregateSql(args[0].Expression);
+            return left is null ? null : new BakedCondition("", "", null, null, left);
+        }
+
+        // .UnionAll(<select chain>) -- inline, or a local or field holding one.
+        public BakedQuerySpec? ResolveUnionBranch(ExpressionSyntax expression)
+        {
+            var chain = expression as InvocationExpressionSyntax ?? ResolveDeclaredChain(expression);
+            return chain is null ? null : WalkChain(chain, _model, out _);
+        }
+
+        // A local or field holding a builder chain, e.g. var closed = db.Select(...)...
+        private ExpressionSyntax? ResolveDeclaredChain(ExpressionSyntax expression)
+        {
+            var symbol = _model.GetSymbolInfo(expression).Symbol;
+            if (symbol is not (ILocalSymbol or IFieldSymbol))
+            {
+                return null;
+            }
+
+            foreach (var syntaxRef in symbol.DeclaringSyntaxReferences)
+            {
+                var initializer = syntaxRef.GetSyntax() switch
+                {
+                    VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+                    PropertyDeclarationSyntax property => property.Initializer?.Value,
+                    _ => null
+                };
+
+                if (initializer is InvocationExpressionSyntax declared)
+                {
+                    return declared;
+                }
+            }
+
+            return null;
+        }
+
         // Sql.As(Sql.Count(), "N") or a bare Sql.Min(t.Col). The SQL is rendered
         // here; the CLR type is left to the projection target, because an
         // aggregate's result type differs per dialect (count is bigint on
         // Postgres, int on SQL Server).
         public BakedColumn? ResolveSelectExpression(ExpressionSyntax expression)
+            => ResolveSelectExpressionCore(expression, requireAlias: true);
+
+        private BakedColumn? ResolveSelectExpressionCore(ExpressionSyntax expression, bool requireAlias)
         {
             string? alias = null;
             if (expression is InvocationExpressionSyntax
@@ -434,6 +519,16 @@ internal static class BakedChainWalker
                 return null;
             }
 
+            // Sql.Value(x) projects a constant. The placeholder takes a bind slot in
+            // select-item order; the value itself comes from the builder at run time.
+            if (aggregateMember.Name.Identifier.Text == "Value" && alias is not null)
+            {
+                return new BakedColumn(
+                    "", "", alias, "object", isRequired: false, "GetFieldValue<object>",
+                    projectionName: alias,
+                    isLiteral: true);
+            }
+
             var function = aggregateMember.Name.Identifier.Text switch
             {
                 "Count" => "count",
@@ -443,9 +538,10 @@ internal static class BakedChainWalker
                 "Max" => "max",
                 _ => null
             };
-            if (function is null || alias is null)
+            if (function is null || (requireAlias && alias is null))
             {
-                // An unaliased aggregate has no member to bind to.
+                // In a select list an unaliased aggregate has no member to bind to;
+                // in HAVING there is nothing to name.
                 return null;
             }
 
@@ -464,10 +560,14 @@ internal static class BakedChainWalker
             }
 
             return new BakedColumn(
-                "", "", alias, "object", isRequired: false, "GetFieldValue<object>",
+                "", "", alias ?? "", "object", isRequired: false, "GetFieldValue<object>",
                 projectionName: alias,
                 sqlExpression: $"{function}({argument})");
         }
+
+        // The rendered SQL for a bare aggregate call, without any alias.
+        public string? ResolveAggregateSql(ExpressionSyntax expression)
+            => ResolveSelectExpressionCore(expression, requireAlias: false)?.SqlExpression;
 
         // The emitter quotes per dialect; the walker knows the dialect only from
         // the resolved tables, so mirror it from the first one seen.

@@ -4,7 +4,7 @@ namespace Mizzle.Generators;
 
 internal sealed class BakedColumn
 {
-    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false, string? sqlExpression = null)
+    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false, string? sqlExpression = null, bool isLiteral = false)
     {
         TableAlias = tableAlias;
         DbName = dbName;
@@ -16,6 +16,7 @@ internal sealed class BakedColumn
         ProjectionName = projectionName;
         IsUntrimmed = isUntrimmed;
         SqlExpression = sqlExpression;
+        IsLiteral = isLiteral;
     }
 
     public string TableAlias { get; }
@@ -40,7 +41,11 @@ internal sealed class BakedColumn
     // because an aggregate's result type is dialect-specific.
     public string? SqlExpression { get; }
 
-    public bool IsExpression => SqlExpression is not null;
+    // A literal projected into the select list. Emits a placeholder and consumes a
+    // bind slot; the value is supplied at run time by the same builder.
+    public bool IsLiteral { get; }
+
+    public bool IsExpression => SqlExpression is not null || IsLiteral;
 }
 
 // A table as used by one query: its schema facts plus the alias this particular
@@ -60,13 +65,17 @@ internal sealed class BakedTable
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
-    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName)
+    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null)
     {
+        LeftExpression = leftExpression;
         LeftAlias = leftAlias;
         LeftDbName = leftDbName;
         RightAlias = rightAlias;
         RightDbName = rightDbName;
     }
+
+    // Set when the left side is an aggregate rather than a column, as in HAVING.
+    public string? LeftExpression { get; }
 
     public string LeftAlias { get; }
     public string LeftDbName { get; }
@@ -117,7 +126,9 @@ internal sealed class BakedQuerySpec
         int? offset,
         IReadOnlyList<BakedCte> with,
         bool recursiveWith,
-        IReadOnlyList<(string Alias, string DbName)> groupBy)
+        IReadOnlyList<(string Alias, string DbName)> groupBy,
+        IReadOnlyList<BakedCondition> having,
+        IReadOnlyList<BakedQuerySpec> unionAll)
     {
         IsPostgres = isPostgres;
         From = from;
@@ -131,6 +142,8 @@ internal sealed class BakedQuerySpec
         With = with;
         RecursiveWith = recursiveWith;
         GroupBy = groupBy;
+        Having = having;
+        UnionAll = unionAll;
     }
 
     public bool IsPostgres { get; }
@@ -145,6 +158,8 @@ internal sealed class BakedQuerySpec
     public IReadOnlyList<BakedCte> With { get; }
     public bool RecursiveWith { get; }
     public IReadOnlyList<(string Alias, string DbName)> GroupBy { get; }
+    public IReadOnlyList<BakedCondition> Having { get; }
+    public IReadOnlyList<BakedQuerySpec> UnionAll { get; }
 }
 
 // Mirrors PgEmitter/SqlServerEmitter output for the statically-visible subset,
@@ -200,7 +215,13 @@ internal static class BakedSqlEmitter
             sql.Append("DISTINCT ");
         }
 
-        sql.Append(string.Join(", ", spec.Select.Select(c => SelectItem(spec, c))));
+        var selectItems = new List<string>();
+        foreach (var item in spec.Select)
+        {
+            selectItems.Add(SelectItem(spec, item, ref slot));
+        }
+
+        sql.Append(string.Join(", ", selectItems));
         sql.Append(" FROM ");
         sql.Append(Table(spec, spec.From));
         foreach (var join in spec.Joins)
@@ -221,6 +242,12 @@ internal static class BakedSqlEmitter
         {
             sql.Append(" GROUP BY ");
             sql.Append(string.Join(", ", spec.GroupBy.Select(g => Column(spec, g.Alias, g.DbName))));
+        }
+
+        if (spec.Having.Count > 0)
+        {
+            sql.Append(" HAVING ");
+            sql.Append(FoldConditions(spec, spec.Having, ref slot));
         }
 
         if (spec.OrderBy.Count > 0)
@@ -258,6 +285,18 @@ internal static class BakedSqlEmitter
             }
         }
 
+        foreach (var union in spec.UnionAll)
+        {
+            var body = Emit(union, ref slot, includeWith: false);
+            if (body is null)
+            {
+                return null;
+            }
+
+            sql.Append(" UNION ALL ");
+            sql.Append(body);
+        }
+
         return sql.ToString();
     }
 
@@ -274,17 +313,22 @@ internal static class BakedSqlEmitter
         return result;
     }
 
+    private static string Placeholder(BakedQuerySpec spec, ref int slot)
+    {
+        var placeholder = spec.IsPostgres ? $"${slot + 1}" : $"@p{slot}";
+        slot++;
+        return placeholder;
+    }
+
     private static string Condition(BakedQuerySpec spec, BakedCondition condition, ref int slot)
     {
-        var left = Column(spec, condition.LeftAlias, condition.LeftDbName);
+        var left = condition.LeftExpression ?? Column(spec, condition.LeftAlias, condition.LeftDbName);
         if (!condition.IsBind)
         {
             return $"{left} = {Column(spec, condition.RightAlias!, condition.RightDbName!)}";
         }
 
-        var placeholder = spec.IsPostgres ? $"${slot + 1}" : $"@p{slot}";
-        slot++;
-        return $"{left} = {placeholder}";
+        return $"{left} = {Placeholder(spec, ref slot)}";
     }
 
     private static string Table(BakedQuerySpec spec, BakedTable table)
@@ -295,9 +339,11 @@ internal static class BakedSqlEmitter
         return $"{name} AS {Quote(spec, table.Alias)}";
     }
 
-    private static string SelectItem(BakedQuerySpec spec, BakedColumn column)
+    private static string SelectItem(BakedQuerySpec spec, BakedColumn column, ref int slot)
     {
-        var expr = column.SqlExpression ?? Column(spec, column.TableAlias, column.DbName);
+        var expr = column.IsLiteral
+            ? Placeholder(spec, ref slot)
+            : column.SqlExpression ?? Column(spec, column.TableAlias, column.DbName);
         return column.ProjectionName is null ? expr : $"{expr} AS {Quote(spec, column.ProjectionName)}";
     }
 
