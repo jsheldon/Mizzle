@@ -49,19 +49,13 @@ public sealed class SqlColumn<T> : Column<T>
     }
 
     /// <summary>
-    ///     Records that the column carries a unique constraint. Metadata only -- Mizzle
-    ///     emits no DDL and nothing currently reads it.
+    ///     Records the column's database default, so an insert may legitimately omit it.
     /// </summary>
-    public SqlColumn<T> Unique()
-    {
-        MarkUnique();
-        return this;
-    }
-
-    /// <summary>
-    ///     Records the column's database default. Metadata only -- Mizzle emits no DDL
-    ///     and nothing currently reads it.
-    /// </summary>
+    /// <remarks>
+    ///     Mizzle emits no DDL; this declares what the database already does. Reserved
+    ///     for insert-completeness validation -- a NOT NULL column with neither a value
+    ///     nor a default -- and not yet read.
+    /// </remarks>
     public SqlColumn<T> Default(T value)
     {
         MarkDefault(value);
@@ -69,9 +63,13 @@ public sealed class SqlColumn<T> : Column<T>
     }
 
     /// <summary>
-    ///     Records a foreign key to <paramref name="column"/>. Metadata only -- joins
-    ///     are still written explicitly and nothing currently reads it.
+    ///     Records a foreign key from this column to <paramref name="column"/>.
     /// </summary>
+    /// <remarks>
+    ///     Mizzle emits no DDL; this declares a relationship that already exists.
+    ///     Reserved for join validation -- checking that an <c>On</c> condition matches
+    ///     a declared relationship -- and not yet read.
+    /// </remarks>
     public SqlColumn<T> References(IColumn column)
     {
         MarkReferences(column);

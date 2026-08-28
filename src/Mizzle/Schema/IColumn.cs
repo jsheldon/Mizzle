@@ -11,7 +11,6 @@ public interface IColumn
     bool IsVersion { get; }
     bool IsPrimaryKey { get; }
     bool IsRequired { get; }
-    bool IsUnique { get; }
     bool HasDefault { get; }
     object? DefaultValue { get; }
     IColumn? ReferencedColumn { get; }

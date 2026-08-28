@@ -6,7 +6,7 @@ file sealed class Users : PgTable<Users>
 {
     public Users() : base("users", "public") { }
     public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
-    public PgColumn<string> Email { get; } = Text("email").NotNull().Unique();
+    public PgColumn<string> Email { get; } = Text("email").NotNull();
 }
 
 file sealed class SqlUsers : SqlTable<SqlUsers>
@@ -50,7 +50,6 @@ public sealed class SchemaTests
         var users = new Users();
         Assert.True(users.Id.IsPrimaryKey);
         Assert.True(users.Email.IsRequired);
-        Assert.True(users.Email.IsUnique);
         Assert.True(users.Id.IsRequired); // PrimaryKey implies required
     }
 

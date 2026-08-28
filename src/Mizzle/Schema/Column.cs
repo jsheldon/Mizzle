@@ -21,8 +21,6 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
 
     public bool IsRequired { get; private set; }
 
-    public bool IsUnique { get; private set; }
-
     public bool HasDefault { get; private set; }
 
     public object? DefaultValue { get; private set; }
@@ -53,7 +51,6 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
         IsVersion = source.IsVersion;
         IsPrimaryKey = source.IsPrimaryKey;
         IsRequired = source.IsRequired;
-        IsUnique = source.IsUnique;
         HasDefault = source.HasDefault;
         DefaultValue = source.DefaultValue;
         ReferencedColumn = source.ReferencedColumn;
@@ -109,8 +106,6 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
     }
 
     protected void MarkNotNull() => IsRequired = true;
-
-    protected void MarkUnique() => IsUnique = true;
 
     protected void MarkDefault(object? value)
     {

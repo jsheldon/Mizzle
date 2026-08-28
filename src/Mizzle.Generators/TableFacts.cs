@@ -344,7 +344,7 @@ internal static class TableFacts
     }
 
     // Names of the fluent modifiers chained after the factory call, e.g.
-    // Text("email").NotNull().Unique() -> ["Unique", "NotNull"].
+    // Text("email").NotNull().PrimaryKey() -> ["PrimaryKey", "NotNull"].
     public static IReadOnlyList<string> ModifierNames(IPropertySymbol member)
     {
         var names = new List<string>();
