@@ -128,7 +128,15 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             ? "Mizzle.Generated"
             : symbol.ContainingNamespace.ToDisplayString();
 
-        return new TableModel(ns, symbol.Name, Singular(symbol.Name), columns, mismatches, converterErrors);
+        // The record must not collide with the table class it is generated from:
+        // a singular class name (Patient, RxNorm) singularizes to itself.
+        var singular = Singular(symbol.Name);
+        if (string.Equals(singular, symbol.Name, StringComparison.Ordinal))
+        {
+            singular += "Row";
+        }
+
+        return new TableModel(ns, symbol.Name, singular, columns, mismatches, converterErrors);
     }
 
     private static void Generate(SourceProductionContext context, TableModel table, bool trimStrings)

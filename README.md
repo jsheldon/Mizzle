@@ -265,6 +265,29 @@ A CTE whose body is a statically visible chain is baked along with the outer
 query, so CTE queries stay on the interceptor path instead of falling back to
 runtime compilation.
 
+To join a CTE with typed columns, declare its shape as a table whose name is the
+CTE name and whose schema is omitted:
+
+```csharp
+public sealed class RxNorm : PgTable<RxNorm>
+{
+    public RxNorm() : base("rxnorm") { }
+    public PgColumn<string> Ndc { get; } = Text("ndc").NotNull();
+    public PgColumn<string> Code { get; } = Text("code").NotNull();
+}
+
+var rows = await db.Select(o.OrderId, rx.Code.As("Code"))
+    .With(CteBuilder.Named("rxnorm", body))
+    .From(o)
+    .LeftJoin(rx).On(o.Ndc.Eq(rx.Ndc))
+    .ToListAsync<OrderCode>();
+```
+
+The CTE then behaves like any other table: typed columns, `As(...)`, left-join
+nullability, and the projection diagnostics. Note that nothing checks the
+declared columns against the CTE body's select list -- a mismatch surfaces at the
+database, not at build time.
+
 ## Returning rows from writes
 
 Insert, update and delete expose the same typed terminators as select --

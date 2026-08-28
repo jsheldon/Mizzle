@@ -317,11 +317,12 @@ public sealed class SchemaGeneratorTests
     }
 
     [Theory]
-    // Regression: naive "strip trailing s" produced Addres / Statu / Diagnosi.
-    [InlineData("Address", "Address")]
-    [InlineData("Status", "Status")]
-    [InlineData("PatientDiagnosis", "PatientDiagnosis")]
-    [InlineData("Business", "Business")]
+    // Not mangled to Addres/Statu/Diagnosi, and suffixed rather than colliding
+    // with the table class of the same name.
+    [InlineData("Address", "AddressRow")]
+    [InlineData("Status", "StatusRow")]
+    [InlineData("PatientDiagnosis", "PatientDiagnosisRow")]
+    [InlineData("Business", "BusinessRow")]
     // Genuine plurals still singularize.
     [InlineData("Persons", "Person")]
     [InlineData("MstrLists", "MstrList")]
@@ -329,7 +330,9 @@ public sealed class SchemaGeneratorTests
     [InlineData("Addresses", "Address")]
     [InlineData("Statuses", "Status")]
     // Already singular, no trailing s.
-    [InlineData("Person", "Person")]
+    // A singular class name would otherwise generate a record of the same name (CS0101).
+    [InlineData("Person", "PersonRow")]
+    [InlineData("RxNorm", "RxNormRow")]
     public void Record_name_singularizes_without_mangling(string tableClass, string expectedRecord)
     {
         var source = $$"""
