@@ -23,8 +23,12 @@ public sealed class PostgresDb : IQueryExecutor
         _options = options ?? new MizzleOptions();
     }
 
-    public SelectBuilder Select(params IColumn[] columns)
-        => new SelectBuilder(this).Select(columns);
+    /// <summary>
+    ///     Starts a select. Columns convert implicitly; expressions are aliased with
+    ///     <c>Sql.As(...)</c>, and the two can be mixed.
+    /// </summary>
+    public SelectBuilder Select(params SelectItem[] items)
+        => new SelectBuilder(this).Select(items);
 
     public UpdateBuilder Update(ITable table)
         => new(table, this);

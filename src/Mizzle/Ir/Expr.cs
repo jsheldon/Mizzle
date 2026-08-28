@@ -2,7 +2,11 @@ namespace Mizzle.Ir;
 
 public abstract record Expr;
 
-public sealed record ColumnRef(string TableAlias, string ColumnName, Type ClrType) : Expr;
+public sealed record ColumnRef(string TableAlias, string ColumnName, Type ClrType) : Expr
+{
+    /// <summary>Lets a column reference sit in a select list unaliased.</summary>
+    public static implicit operator SelectItem(ColumnRef column) => new(column, null);
+}
 
 public sealed record ParamRef(int Slot, Type ClrType) : Expr;
 

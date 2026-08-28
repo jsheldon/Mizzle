@@ -67,5 +67,40 @@ public static class Sql
     /// <summary>A <c>COUNT</c> aggregate.</summary>
     public static AggregateExpr Count() => new(AggregateKind.Count, null);
 
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static AggregateExpr Sum(Expr arg) => new(AggregateKind.Sum, arg);
+
+    /// <summary>A <c>SUM</c> aggregate over a column.</summary>
+    public static AggregateExpr Sum(IColumn column) => Sum(column.ToRef());
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static AggregateExpr Avg(Expr arg) => new(AggregateKind.Avg, arg);
+
+    /// <summary>An <c>AVG</c> aggregate over a column.</summary>
+    public static AggregateExpr Avg(IColumn column) => Avg(column.ToRef());
+
+    /// <summary>A <c>MIN</c> aggregate.</summary>
+    public static AggregateExpr Min(Expr arg) => new(AggregateKind.Min, arg);
+
+    /// <summary>A <c>MIN</c> aggregate over a column.</summary>
+    public static AggregateExpr Min(IColumn column) => Min(column.ToRef());
+
+    /// <summary>A <c>MAX</c> aggregate.</summary>
+    public static AggregateExpr Max(Expr arg) => new(AggregateKind.Max, arg);
+
+    /// <summary>A <c>MAX</c> aggregate over a column.</summary>
+    public static AggregateExpr Max(IColumn column) => Max(column.ToRef());
+
+    /// <summary>Names an expression in a select list.</summary>
+    /// <example><code>Sql.As(Sql.Count(), "Orders")</code></example>
+    public static SelectItem As(Expr expr, string alias) => new(expr, alias);
+
+    /// <summary>Projects a column held as an <see cref="IColumn"/> rather than a concrete type.</summary>
+    public static SelectItem Item(IColumn column) => new(column.ToRef(), column.ProjectionName);
+
+    /// <summary>A literal value, for cases like a constant priority column.</summary>
+    public static ValueExpr Value<T>(T value) => new(value, typeof(T));
+
+
     public static AggregateExpr Count(Expr arg) => new(AggregateKind.Count, arg);
 }

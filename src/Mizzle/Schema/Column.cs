@@ -117,6 +117,13 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
 
     protected void SetLength(int length) => Length = length;
 
+    /// <summary>
+    ///     Lets a column appear in a select list alongside expressions. Carries the
+    ///     projection alias from <c>As(...)</c> when one is set.
+    /// </summary>
+    public static implicit operator SelectItem(Column<T> column)
+        => new(column.ToRef(), column.ProjectionName);
+
     public ColumnRef ToRef()
         => new(TableAlias ?? Name, Name, typeof(T));
 

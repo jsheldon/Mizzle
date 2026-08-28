@@ -18,11 +18,13 @@ public sealed class SelectBuilder
     private readonly EquatableList<CteClause> _with;
     private readonly bool _recursiveWith;
     private readonly EquatableList<SelectQuery> _unionAll;
+    private readonly EquatableList<Expr> _groupBy;
+    private readonly Expr? _having;
 
     private readonly IQueryExecutor? _executor;
 
     public SelectBuilder(IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(executor, overlay, [], null, [], null, [], null, null, false, [], false, [])
+        : this(executor, overlay, [], null, [], null, [], null, null, false, [], false, [], [], null)
     {
     }
 
@@ -39,7 +41,9 @@ public sealed class SelectBuilder
         bool distinct,
         EquatableList<CteClause> with,
         bool recursiveWith,
-        EquatableList<SelectQuery> unionAll)
+        EquatableList<SelectQuery> unionAll,
+        EquatableList<Expr> groupBy,
+        Expr? having)
     {
         _executor = executor;
         Overlay = overlay;
@@ -54,19 +58,41 @@ public sealed class SelectBuilder
         _with = with;
         _recursiveWith = recursiveWith;
         _unionAll = unionAll;
+        _groupBy = groupBy;
+        _having = having;
     }
 
     public QueryOptions? Overlay { get; }
 
-    public SelectBuilder Select(params ColumnRef[] columns)
-        => Copy(select: [..columns.Select(c => new SelectItem(c, null))]);
+    /// <summary>
+    ///     The select list. Columns convert implicitly and carry their <c>As(...)</c>
+    ///     alias; expressions -- aggregates, literals, function calls -- are aliased
+    ///     with <c>Sql.As(...)</c>. Both can be mixed freely.
+    /// </summary>
+    /// <example>
+    ///     <code>db.Select(o.CustomerId, Sql.Count().As("Orders")).From(o).GroupBy(o.CustomerId)</code>
+    /// </example>
+    public SelectBuilder Select(params SelectItem[] items) => Copy(select: [..items]);
+
+    /// <summary>Groups the result by the given expressions.</summary>
+    public SelectBuilder GroupBy(params Expr[] expressions) => Copy(groupBy: [.._groupBy, ..expressions]);
+
+    /// <summary>Groups the result by the given columns.</summary>
+    public SelectBuilder GroupBy(params IColumn[] columns)
+        => Copy(groupBy: [.._groupBy, ..columns.Select(c => (Expr)c.ToRef())]);
 
     /// <summary>
-    ///     The columns to project. Use <c>As(...)</c> on a column when the schema name
-    ///     and the target member name differ.
+    ///     Filters grouped rows. Repeated calls combine with <c>AND</c>, matching
+    ///     <see cref="Where(Expr)"/>.
     /// </summary>
-    public SelectBuilder Select(params IColumn[] columns)
-        => Copy(select: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))]);
+    public SelectBuilder Having(Expr expr)
+        => Copy(having: _having is null ? expr : Sql.And(_having, expr));
+
+    /// <summary>Appends a <c>UNION ALL</c> branch.</summary>
+    public SelectBuilder UnionAll(SelectBuilder other) => UnionAll(other.Build());
+
+    /// <summary>Appends a <c>UNION ALL</c> branch.</summary>
+    public SelectBuilder UnionAll(SelectQuery other) => Copy(unionAll: [.._unionAll, other]);
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 
@@ -184,7 +210,9 @@ public sealed class SelectBuilder
             _distinct,
             _with,
             _recursiveWith,
-            _unionAll);
+            _unionAll,
+            _groupBy.Count == 0 ? null : _groupBy,
+            _having);
     }
 
     public Task<IReadOnlyList<T>> ToListAsync<T>(
@@ -346,6 +374,8 @@ public sealed class SelectBuilder
         EquatableList<CteClause>? with = null,
         bool? recursiveWith = null,
         EquatableList<SelectQuery>? unionAll = null,
+        EquatableList<Expr>? groupBy = null,
+        Expr? having = null,
         QueryOptions? overlay = null)
         => new(
             _executor,
@@ -360,5 +390,7 @@ public sealed class SelectBuilder
             distinct ?? _distinct,
             with ?? _with,
             recursiveWith ?? _recursiveWith,
-            unionAll ?? _unionAll);
+            unionAll ?? _unionAll,
+            groupBy ?? _groupBy,
+            having ?? _having);
 }
