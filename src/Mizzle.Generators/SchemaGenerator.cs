@@ -222,14 +222,43 @@ public sealed class SchemaGenerator : IIncrementalGenerator
             : $"r.IsDBNull({ordinal}) ? ({column.ClrType}?)null : {read}";
     }
 
+    // Names the per-table record. Not a general pluralizer -- just enough English
+    // to stop mangling the endings real schemas use: Address/Status/Diagnosis are
+    // already singular, and stripping the "s" produced Addres/Statu/Diagnosi.
+    // Not exhaustive: irregulars and -as endings (Alias) still singularize naively.
     private static string Singular(string tableName)
     {
-        if (tableName.Length > 1 && (tableName.EndsWith("s", StringComparison.Ordinal) || tableName.EndsWith("S", StringComparison.Ordinal)))
+        if (tableName.Length <= 1)
         {
-            return tableName.Substring(0, tableName.Length - 1);
+            return tableName;
         }
 
-        return tableName;
+        // Categories -> Category
+        if (tableName.Length > 3 && tableName.EndsWith("ies", StringComparison.OrdinalIgnoreCase))
+        {
+            return tableName.Substring(0, tableName.Length - 3) + "y";
+        }
+
+        // Addresses -> Address, Statuses -> Status, Boxes -> Box, Batches -> Batch
+        foreach (var suffix in new[] { "sses", "shes", "ches", "xes", "zes", "ses" })
+        {
+            if (tableName.Length > suffix.Length && tableName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return tableName.Substring(0, tableName.Length - 2);
+            }
+        }
+
+        // Already singular: Address, Status, Diagnosis, Alias.
+        if (tableName.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
+            || tableName.EndsWith("us", StringComparison.OrdinalIgnoreCase)
+            || tableName.EndsWith("is", StringComparison.OrdinalIgnoreCase))
+        {
+            return tableName;
+        }
+
+        return tableName.EndsWith("s", StringComparison.OrdinalIgnoreCase)
+            ? tableName.Substring(0, tableName.Length - 1)
+            : tableName;
     }
 
     private sealed class TableModel

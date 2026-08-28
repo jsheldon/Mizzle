@@ -315,4 +315,36 @@ public sealed class SchemaGeneratorTests
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(false, source));
         Assert.DoesNotContain(".Trim()", generated, StringComparison.Ordinal);
     }
+
+    [Theory]
+    // Regression: naive "strip trailing s" produced Addres / Statu / Diagnosi.
+    [InlineData("Address", "Address")]
+    [InlineData("Status", "Status")]
+    [InlineData("PatientDiagnosis", "PatientDiagnosis")]
+    [InlineData("Business", "Business")]
+    // Genuine plurals still singularize.
+    [InlineData("Persons", "Person")]
+    [InlineData("MstrLists", "MstrList")]
+    [InlineData("Categories", "Category")]
+    [InlineData("Addresses", "Address")]
+    [InlineData("Statuses", "Status")]
+    // Already singular, no trailing s.
+    [InlineData("Person", "Person")]
+    public void Record_name_singularizes_without_mangling(string tableClass, string expectedRecord)
+    {
+        var source = $$"""
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public sealed class {{tableClass}} : SqlTable<{{tableClass}}>
+            {
+                public {{tableClass}}() : base("t", "dbo", "x") { }
+                public SqlColumn<string> Name { get; } = VarChar("name", 10).NotNull();
+            }
+            """;
+
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(source));
+        Assert.Contains($"public sealed record {expectedRecord}(", generated, StringComparison.Ordinal);
+    }
 }

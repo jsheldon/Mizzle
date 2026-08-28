@@ -20,7 +20,19 @@ internal static class TextNames
             upper = false;
         }
 
-        return sb.Length == 0 ? "Generated" : sb.ToString();
+        if (sb.Length == 0)
+        {
+            return "Generated";
+        }
+
+        // A C# identifier cannot start with a digit; legacy schemas do
+        // (2fa_enabled, 1st_contact), and the scaffolded class would not compile.
+        if (char.IsDigit(sb[0]))
+        {
+            sb.Insert(0, '_');
+        }
+
+        return sb.ToString();
     }
 
     public static string ToTableClass(string tableName)
