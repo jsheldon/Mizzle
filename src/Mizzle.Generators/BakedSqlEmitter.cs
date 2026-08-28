@@ -4,7 +4,7 @@ namespace Mizzle.Generators;
 
 internal sealed class BakedColumn
 {
-    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false)
+    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false, string? sqlExpression = null)
     {
         TableAlias = tableAlias;
         DbName = dbName;
@@ -15,6 +15,7 @@ internal sealed class BakedColumn
         ReadConverter = readConverter;
         ProjectionName = projectionName;
         IsUntrimmed = isUntrimmed;
+        SqlExpression = sqlExpression;
     }
 
     public string TableAlias { get; }
@@ -33,6 +34,13 @@ internal sealed class BakedColumn
 
     // Untrimmed() on the column declaration.
     public bool IsUntrimmed { get; }
+
+    // Set for a projected expression (an aggregate) rather than a table column.
+    // The SQL is already rendered; the CLR type comes from the target member,
+    // because an aggregate's result type is dialect-specific.
+    public string? SqlExpression { get; }
+
+    public bool IsExpression => SqlExpression is not null;
 }
 
 // A table as used by one query: its schema facts plus the alias this particular
@@ -108,7 +116,8 @@ internal sealed class BakedQuerySpec
         int? limit,
         int? offset,
         IReadOnlyList<BakedCte> with,
-        bool recursiveWith)
+        bool recursiveWith,
+        IReadOnlyList<(string Alias, string DbName)> groupBy)
     {
         IsPostgres = isPostgres;
         From = from;
@@ -121,6 +130,7 @@ internal sealed class BakedQuerySpec
         Offset = offset;
         With = with;
         RecursiveWith = recursiveWith;
+        GroupBy = groupBy;
     }
 
     public bool IsPostgres { get; }
@@ -134,6 +144,7 @@ internal sealed class BakedQuerySpec
     public int? Offset { get; }
     public IReadOnlyList<BakedCte> With { get; }
     public bool RecursiveWith { get; }
+    public IReadOnlyList<(string Alias, string DbName)> GroupBy { get; }
 }
 
 // Mirrors PgEmitter/SqlServerEmitter output for the statically-visible subset,
@@ -204,6 +215,12 @@ internal static class BakedSqlEmitter
         {
             sql.Append(" WHERE ");
             sql.Append(FoldConditions(spec, spec.Where, ref slot));
+        }
+
+        if (spec.GroupBy.Count > 0)
+        {
+            sql.Append(" GROUP BY ");
+            sql.Append(string.Join(", ", spec.GroupBy.Select(g => Column(spec, g.Alias, g.DbName))));
         }
 
         if (spec.OrderBy.Count > 0)
@@ -280,7 +297,7 @@ internal static class BakedSqlEmitter
 
     private static string SelectItem(BakedQuerySpec spec, BakedColumn column)
     {
-        var expr = Column(spec, column.TableAlias, column.DbName);
+        var expr = column.SqlExpression ?? Column(spec, column.TableAlias, column.DbName);
         return column.ProjectionName is null ? expr : $"{expr} AS {Quote(spec, column.ProjectionName)}";
     }
 

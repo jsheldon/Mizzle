@@ -92,6 +92,43 @@ public sealed class BakedSqlParityTests
     }
 
     [Fact]
+    public void Grouped_aggregate_bakes_the_same_sql_the_runtime_emits()
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.Status, Sql.As(Sql.Count(), "N"), Sql.As(Sql.Min(o.OrderId), "First"))
+            .From(o.ToFrom())
+            .Where(o.Status.Eq("open"))
+            .GroupBy(o.Status));
+
+        var baked = BakedSql("""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record AggParityRow(string Status, long N, Guid? First);
+
+            public static class AggParityQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.Status, Sql.As(Sql.Count(), "N"), Sql.As(Sql.Min(o.OrderId), "First"))
+                        .From(o)
+                        .Where(o.Status.Eq("open"))
+                        .GroupBy(o.Status)
+                        .ToListAsync<AggParityRow>();
+                }
+            }
+            """);
+
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
     public void Joined_query_bakes_the_same_sql_the_runtime_emits()
     {
         var o = new Orders();

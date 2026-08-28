@@ -276,8 +276,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         var usedParams = new HashSet<IParameterSymbol>(SymbolEqualityComparer.Default);
         var usedProps = new HashSet<IPropertySymbol>(SymbolEqualityComparer.Default);
-        var ctorArgs = new Dictionary<string, int>();
-        var propAssigns = new List<(string Name, int Ordinal)>();
+        var ctorArgs = new Dictionary<string, (int Ordinal, string? ExpressionType, bool Nullable)>();
+        var propAssigns = new List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)>();
 
         for (var i = 0; i < select.Count; i++)
         {
@@ -302,6 +302,33 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
             var memberType = paramMatches.Count == 1 ? paramMatches[0].Type : propMatches[0].Type;
             var memberName = paramMatches.Count == 1 ? paramMatches[0].Name : propMatches[0].Name;
+
+            // A projected expression has no declared storage type -- an aggregate's
+            // result differs per dialect -- so it reads as the member's own type and
+            // skips the column checks below.
+            if (column.IsExpression)
+            {
+                var expressionType = (IsNullable(memberType)
+                        ? (memberType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
+                            ? ((INamedTypeSymbol)memberType).TypeArguments[0]
+                            : memberType.WithNullableAnnotation(NullableAnnotation.NotAnnotated))
+                        : memberType)
+                    .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+                if (paramMatches.Count == 1)
+                {
+                    usedParams.Add(paramMatches[0]);
+                    ctorArgs[paramMatches[0].Name] = (i, expressionType, IsNullable(memberType));
+                }
+                else
+                {
+                    usedProps.Add(propMatches[0]);
+                    propAssigns.Add((propMatches[0].Name, i, expressionType, IsNullable(memberType)));
+                }
+
+                continue;
+            }
+
             if (!column.IsRequired && !IsNullable(memberType))
             {
                 errors.Add(("MIZ005", [column.MemberName, memberName, targetName]));
@@ -330,12 +357,12 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             if (paramMatches.Count == 1)
             {
                 usedParams.Add(paramMatches[0]);
-                ctorArgs[paramMatches[0].Name] = i;
+                ctorArgs[paramMatches[0].Name] = (i, null, false);
             }
             else
             {
                 usedProps.Add(propMatches[0]);
-                propAssigns.Add((propMatches[0].Name, i));
+                propAssigns.Add((propMatches[0].Name, i, null, false));
             }
         }
 
@@ -360,7 +387,9 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         var fq = target.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var orderedCtorArgs = ctor is null
             ? []
-            : ctor.Parameters.Where(usedParams.Contains).Select(p => (p.Name, ctorArgs[p.Name])).ToList();
+            : ctor.Parameters.Where(usedParams.Contains)
+                .Select(p => (p.Name, ctorArgs[p.Name].Ordinal, ctorArgs[p.Name].ExpressionType, ctorArgs[p.Name].Nullable))
+                .ToList();
         return new MapperPlan(fq, orderedCtorArgs, propAssigns);
     }
 
@@ -370,21 +399,40 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
     {
         var args = string.Join(
             ", ",
-            plan.CtorArgs.Select(a => $"{a.Name}: {ReadExpression(select[a.Ordinal], a.Ordinal, trimStrings)}"));
+            plan.CtorArgs.Select(a => $"{a.Name}: {ReadItem(select[a.Ordinal], a, trimStrings)}"));
         var body = $"new {plan.TargetFq}({args})";
         if (plan.PropAssigns.Count > 0)
         {
             body += " { " + string.Join(
                 ", ",
-                plan.PropAssigns.Select(a => $"{a.Name} = {ReadExpression(select[a.Ordinal], a.Ordinal, trimStrings)}")) + " }";
+                plan.PropAssigns.Select(a => $"{a.Name} = {ReadItem(select[a.Ordinal], a, trimStrings)}")) + " }";
         }
 
         return body;
     }
 
+    private static string ReadItem(
+        BakedColumn column,
+        (string Name, int Ordinal, string? ExpressionType, bool Nullable) member,
+        bool trimStrings)
+    {
+        if (member.ExpressionType is null)
+        {
+            return ReadExpression(column, member.Ordinal, trimStrings);
+        }
+
+        var read = $"r.GetFieldValue<{member.ExpressionType}>({member.Ordinal})";
+        return member.Nullable
+            ? $"r.IsDBNull({member.Ordinal}) ? ({member.ExpressionType}?)null : {read}"
+            : read;
+    }
+
     private sealed class MapperPlan
     {
-        public MapperPlan(string targetFq, List<(string Name, int Ordinal)> ctorArgs, List<(string Name, int Ordinal)> propAssigns)
+        public MapperPlan(
+            string targetFq,
+            List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)> ctorArgs,
+            List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)> propAssigns)
         {
             TargetFq = targetFq;
             CtorArgs = ctorArgs;
@@ -392,8 +440,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         }
 
         public string TargetFq { get; }
-        public List<(string Name, int Ordinal)> CtorArgs { get; }
-        public List<(string Name, int Ordinal)> PropAssigns { get; }
+        public List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)> CtorArgs { get; }
+        public List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)> PropAssigns { get; }
     }
 
     private static bool IsNullable(ITypeSymbol type)

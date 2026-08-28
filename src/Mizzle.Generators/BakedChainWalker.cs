@@ -72,12 +72,26 @@ internal static class BakedChainWalker
                 case "Select" when i == 0 && args.Count > 0:
                     foreach (var arg in args)
                     {
-                        if (state.ResolveColumn(arg.Expression) is not { } column)
+                        var item = state.ResolveColumn(arg.Expression)
+                            ?? state.ResolveSelectExpression(arg.Expression);
+                        if (item is null)
                         {
                             return null;
                         }
 
-                        state.Select.Add(column);
+                        state.Select.Add(item);
+                    }
+
+                    break;
+                case "GroupBy" when args.Count > 0:
+                    foreach (var arg in args)
+                    {
+                        if (state.ResolveColumn(arg.Expression) is not { } grouped)
+                        {
+                            return null;
+                        }
+
+                        state.GroupBy.Add((grouped.TableAlias, grouped.DbName));
                     }
 
                     break;
@@ -228,7 +242,8 @@ internal static class BakedChainWalker
             state.Limit,
             state.Offset,
             state.With,
-            state.RecursiveWith);
+            state.RecursiveWith,
+            state.GroupBy);
         }
         finally
         {
@@ -314,6 +329,7 @@ internal static class BakedChainWalker
         public List<BakedCondition> Where { get; } = [];
         public List<(string Alias, string DbName, bool Desc)> OrderBy { get; } = [];
         public List<BakedCte> With { get; } = [];
+        public List<(string Alias, string DbName)> GroupBy { get; } = [];
         public bool RecursiveWith { get; set; }
         public int? Limit { get; set; }
         public int? Offset { get; set; }
@@ -383,6 +399,82 @@ internal static class BakedChainWalker
 
             return true;
         }
+
+        // Sql.As(Sql.Count(), "N") or a bare Sql.Min(t.Col). The SQL is rendered
+        // here; the CLR type is left to the projection target, because an
+        // aggregate's result type differs per dialect (count is bigint on
+        // Postgres, int on SQL Server).
+        public BakedColumn? ResolveSelectExpression(ExpressionSyntax expression)
+        {
+            string? alias = null;
+            if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "As" } asMember,
+                    ArgumentList.Arguments: { Count: 2 } asArgs
+                }
+                && _model.GetSymbolInfo(asMember).Symbol is IMethodSymbol { ContainingType.Name: "Sql" })
+            {
+                if (asArgs[1].Expression is not LiteralExpressionSyntax literal
+                    || !literal.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    return null;
+                }
+
+                alias = literal.Token.ValueText;
+                expression = asArgs[0].Expression;
+            }
+
+            if (expression is not InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax aggregateMember,
+                    ArgumentList.Arguments: var aggregateArgs
+                }
+                || _model.GetSymbolInfo(aggregateMember).Symbol is not IMethodSymbol { ContainingType.Name: "Sql" })
+            {
+                return null;
+            }
+
+            var function = aggregateMember.Name.Identifier.Text switch
+            {
+                "Count" => "count",
+                "Sum" => "sum",
+                "Avg" => "avg",
+                "Min" => "min",
+                "Max" => "max",
+                _ => null
+            };
+            if (function is null || alias is null)
+            {
+                // An unaliased aggregate has no member to bind to.
+                return null;
+            }
+
+            string argument;
+            if (aggregateArgs.Count == 0)
+            {
+                argument = "*";
+            }
+            else if (aggregateArgs.Count == 1 && ResolveColumn(aggregateArgs[0].Expression) is { } inner)
+            {
+                argument = Quote(inner.TableAlias) + "." + Quote(inner.DbName);
+            }
+            else
+            {
+                return null;
+            }
+
+            return new BakedColumn(
+                "", "", alias, "object", isRequired: false, "GetFieldValue<object>",
+                projectionName: alias,
+                sqlExpression: $"{function}({argument})");
+        }
+
+        // The emitter quotes per dialect; the walker knows the dialect only from
+        // the resolved tables, so mirror it from the first one seen.
+        private string Quote(string identifier)
+            => Tables.Values.FirstOrDefault()?.IsPostgres == false
+                ? "[" + identifier.Replace("]", "]]") + "]"
+                : "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
         // CteBuilder.Named("name", <select chain>.Build()) -- the body is walked
         // with the same machinery as the outer query. A non-literal name, or a
