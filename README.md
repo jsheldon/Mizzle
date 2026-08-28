@@ -279,27 +279,44 @@ non-compilable query into a build error.
 
 ## CLI
 
-`Mizzle.Cli` ships as a .NET tool:
+`Mizzle.Cli` ships as a .NET tool. It is installed through NuGet and runs as
+`mizzle`:
 
 ```bash
 dotnet tool install --global Mizzle.Cli --prerelease
 ```
 
-The installed command is `mizzle`.
-
 ```bash
 mizzle type-map --provider postgres
-mizzle inspect --provider postgres --connection "..." --schema public --all
-mizzle scaffold --provider postgres --connection "..." --schema public --tables users,posts --namespace MyApp.Data --output ./Data/Tables
+mizzle inspect --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --all
+mizzle scaffold --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --tables users,posts --namespace MyApp.Data --output ./Data/Tables
 mizzle doctor --project ./MyApp.csproj
-mizzle diff --provider postgres --connection "..." --schema public --source ./Data/Tables
+mizzle diff --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --source ./Data/Tables
 mizzle explain --provider postgres --sql-file ./query.sql
 mizzle translate-query --provider postgres --sql-file ./query.sql
 ```
 
+Database commands infer `postgres` or `sqlserver` from common connection string
+shapes. Pass `--provider` when the connection string is ambiguous.
+
+`doctor` is intentionally read-only. The project path must be inside the current
+working directory, and inherited project files are read only up to that directory:
+`Directory.Build.props`, `Directory.Build.targets`, and
+`Directory.Packages.props`.
+
 The CLI stops on unsupported database types or SQL shapes with `MZCLI###`
 messages. That is intentional: it should point at what Mizzle needs to learn
 next, not generate code that quietly guesses.
+
+Current commands:
+
+- `type-map`: show the database types Mizzle knows how to scaffold.
+- `inspect`: list tables, columns, database types, nullability, keys, and unsupported mappings.
+- `scaffold`: generate `PgTable<>` or `SqlTable<>` classes from an existing database.
+- `doctor`: check project references, nullable settings, and `MizzleQueryMode`.
+- `diff`: compare live database columns with existing Mizzle table classes.
+- `explain`: summarize SQL features and likely Mizzle support.
+- `translate-query`: translate a small SQL subset into Mizzle query syntax.
 
 ## Building
 
