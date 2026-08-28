@@ -47,15 +47,27 @@ internal static class BakedChainWalker
         hasReportedColumnError = false;
         var calls = new List<(string Name, InvocationExpressionSyntax Invocation)>();
         var current = chain;
-        while (current is InvocationExpressionSyntax invocation)
+        while (true)
         {
-            if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            while (current is InvocationExpressionSyntax invocation)
             {
-                return null;
+                if (invocation.Expression is not MemberAccessExpressionSyntax member)
+                {
+                    return null;
+                }
+
+                calls.Add((member.Name.Identifier.Text, invocation));
+                current = member.Expression;
             }
 
-            calls.Add((member.Name.Identifier.Text, invocation));
-            current = member.Expression;
+            // A chain may be composed across locals -- var q = db.Select(...); q.Where(...)
+            // -- so splice the local's own chain in and keep walking.
+            if (ResolveBuilderLocal(current, model) is not { } spliced)
+            {
+                break;
+            }
+
+            current = spliced;
         }
 
         var receiverType = model.GetTypeInfo(current).Type;
@@ -320,6 +332,59 @@ internal static class BakedChainWalker
         }
 
         return null;
+    }
+
+    // The chain behind a builder-valued local or field. Returns null unless the
+    // symbol is assigned exactly once, at its declaration: a later reassignment
+    // (q = q.Where(...)) would otherwise be silently dropped from the baked SQL,
+    // producing a query missing a filter.
+    private static ExpressionSyntax? ResolveBuilderLocal(ExpressionSyntax expression, SemanticModel model)
+    {
+        if (expression is not (IdentifierNameSyntax or MemberAccessExpressionSyntax)
+            || model.GetTypeInfo(expression).Type?.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
+        {
+            return null;
+        }
+
+        var symbol = model.GetSymbolInfo(expression).Symbol;
+        if (symbol is not (ILocalSymbol or IFieldSymbol))
+        {
+            return null;
+        }
+
+        var declaration = symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        var initializer = declaration switch
+        {
+            VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+            PropertyDeclarationSyntax property => property.Initializer?.Value,
+            _ => null
+        };
+
+        if (initializer is not InvocationExpressionSyntax chain || IsReassigned(symbol, declaration!, model))
+        {
+            return null;
+        }
+
+        return chain;
+    }
+
+    private static bool IsReassigned(ISymbol symbol, SyntaxNode declaration, SemanticModel model)
+    {
+        var scope = declaration.FirstAncestorOrSelf<MemberDeclarationSyntax>();
+        if (scope is null)
+        {
+            return true;
+        }
+
+        foreach (var assignment in scope.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            if (SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(assignment.Left).Symbol, symbol))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
