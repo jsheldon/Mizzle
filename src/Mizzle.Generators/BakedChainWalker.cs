@@ -236,6 +236,48 @@ internal static class BakedChainWalker
         }
     }
 
+    // The Returning(...) columns of an insert/update/delete chain. Enough to
+    // validate a typed write projection at compile time; the SQL itself is still
+    // emitted at runtime, so this does not produce a BakedQuerySpec.
+    public static IReadOnlyList<BakedColumn>? TryGetReturningColumns(
+        InvocationExpressionSyntax terminator,
+        SemanticModel model)
+    {
+        if (terminator.Expression is not MemberAccessExpressionSyntax terminatorMember)
+        {
+            return null;
+        }
+
+        var state = new WalkState(model);
+        for (var current = terminatorMember.Expression; current is InvocationExpressionSyntax invocation;)
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            {
+                return null;
+            }
+
+            if (member.Name.Identifier.Text == "Returning")
+            {
+                var columns = new List<BakedColumn>();
+                foreach (var argument in invocation.ArgumentList.Arguments)
+                {
+                    if (state.ResolveColumn(argument.Expression) is not { } column)
+                    {
+                        return null;
+                    }
+
+                    columns.Add(column);
+                }
+
+                return columns.Count == 0 ? null : columns;
+            }
+
+            current = member.Expression;
+        }
+
+        return null;
+    }
+
     private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
         => expression is InvocationExpressionSyntax
             {

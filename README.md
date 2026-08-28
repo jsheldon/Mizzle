@@ -247,6 +247,43 @@ not run on writes. Exclude a column when trailing whitespace is meaningful:
 public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimmed();
 ```
 
+## Common table expressions
+
+`With` and `WithRecursive` attach a CTE to any statement -- select, insert,
+update or delete:
+
+```csharp
+var stale = db.Select(o.OrderId).From(o).Where(o.Status.Eq("abandoned")).Build();
+
+await db.DeleteFrom(o)
+    .With(CteBuilder.Named("stale", stale))
+    .Where(o.Status.Eq("abandoned"))
+    .ExecuteAsync(ct);
+```
+
+A CTE whose body is a statically visible chain is baked along with the outer
+query, so CTE queries stay on the interceptor path instead of falling back to
+runtime compilation.
+
+## Returning rows from writes
+
+Insert, update and delete expose the same typed terminators as select --
+`ToListAsync<T>`, `FirstAsync<T>`, `FirstOrDefaultAsync<T>`, `SingleAsync<T>`,
+`SingleOrDefaultAsync<T>` -- over their `Returning(...)` columns, and `As(...)`
+works there too:
+
+```csharp
+var updated = await db.Update(o)
+    .Set(o.Status, "shipped")
+    .Where(o.OrderId.Eq(id))
+    .Returning(o.OrderId.As("Id"), o.Status)
+    .SingleAsync<ShippedOrder>(ct);
+```
+
+Write projections are mapped at runtime rather than baked, but the projection
+diagnostics still run at build time, so a returning-into-T mismatch is a
+compile error rather than a runtime throw.
+
 ## How queries execute
 
 Every query builds an immutable IR graph. That is just a small object model for

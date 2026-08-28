@@ -131,9 +131,21 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         var model = context.SemanticModel;
         var symbol = model.GetSymbolInfo(invocation).Symbol as IMethodSymbol
             ?? model.GetSymbolInfo(invocation).CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
-        if (symbol is null
-            || symbol.Name != generic.Identifier.Text
-            || symbol.ContainingType.ToDisplayString() != "Mizzle.Fluent.SelectBuilder"
+        if (symbol is null || symbol.Name != generic.Identifier.Text)
+        {
+            return null;
+        }
+
+        // Write builders share the typed terminators but not the baked path: their
+        // SQL is still emitted at runtime. Validate the projection anyway, so a
+        // returning-into-T mismatch is a build error rather than a runtime throw.
+        var container = symbol.ContainingType.ToDisplayString();
+        if (container is "Mizzle.Fluent.InsertBuilder" or "Mizzle.Fluent.UpdateBuilder" or "Mizzle.Fluent.DeleteBuilder")
+        {
+            return TransformWriteProjection(invocation, generic, model);
+        }
+
+        if (container != "Mizzle.Fluent.SelectBuilder"
             || symbol.Parameters.Length != (terminator == "Page" ? 2 : 1))
         {
             return null;
@@ -181,7 +193,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         if (bound is not null)
         {
-            mapperPlan = BuildMapPlan(bound, spec, model.Compilation, errors);
+            mapperPlan = BuildMapPlan(bound, spec.Select, model.Compilation, errors);
         }
 
 #pragma warning disable RSEXPERIMENTAL002
@@ -196,13 +208,51 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         return new ProjectionSite(typeName, ns, terminator, spec, sql, attribute, mapperPlan, errors, invocation.GetLocation());
     }
 
+    // Validation only: reports MIZ003/004/005/006/010 against the Returning(...)
+    // columns and never emits an interceptor, so the runtime mapper still runs.
+    private static ProjectionSite? TransformWriteProjection(
+        InvocationExpressionSyntax invocation,
+        GenericNameSyntax generic,
+        SemanticModel model)
+    {
+        var typeArg = generic.TypeArgumentList.Arguments[0];
+        if (model.GetTypeInfo(typeArg).Type is not INamedTypeSymbol bound || bound is IErrorTypeSymbol)
+        {
+            return null;
+        }
+
+        var returning = BakedChainWalker.TryGetReturningColumns(invocation, model);
+        if (returning is null)
+        {
+            return null;
+        }
+
+        // A single returned column assigns straight to a scalar T at runtime;
+        // member matching does not apply.
+        if (returning.Count == 1 && !HasMappableMembers(bound))
+        {
+            return null;
+        }
+
+        var errors = new List<(string Id, string[] Args)>();
+        BuildMapPlan(bound, returning, model.Compilation, errors);
+        return errors.Count == 0
+            ? null
+            : new ProjectionSite(bound.Name, "", "Write", null, null, null, null, errors, invocation.GetLocation());
+    }
+
+    private static bool HasMappableMembers(INamedTypeSymbol target)
+        => target.InstanceConstructors.Any(c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length > 0)
+            || target.GetMembers().OfType<IPropertySymbol>().Any(p =>
+                !p.IsStatic && !p.IsIndexer && p.SetMethod is not null && p.DeclaredAccessibility == Accessibility.Public);
+
     // Records which selected column ordinal fills which member, or records
     // diagnostics into errors and returns null. Expression text is composed later,
     // in Generate, because it depends on the MizzleTrimStrings build property,
     // which only reaches the pipeline at the RegisterSourceOutput stage.
     private static MapperPlan? BuildMapPlan(
         INamedTypeSymbol target,
-        BakedQuerySpec spec,
+        IReadOnlyList<BakedColumn> select,
         Compilation compilation,
         List<(string Id, string[] Args)> errors)
     {
@@ -229,9 +279,9 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         var ctorArgs = new Dictionary<string, int>();
         var propAssigns = new List<(string Name, int Ordinal)>();
 
-        for (var i = 0; i < spec.Select.Count; i++)
+        for (var i = 0; i < select.Count; i++)
         {
-            var column = spec.Select[i];
+            var column = select[i];
             var norm = Norm(column.MemberName);
             var paramMatches = ctor is null
                 ? []
@@ -316,17 +366,17 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
     // Composes "new global::Ns.T(param: expr, ...) { Prop = expr, ... }" once the
     // trim flag is known.
-    private static string MapperBody(MapperPlan plan, BakedQuerySpec spec, bool trimStrings)
+    private static string MapperBody(MapperPlan plan, IReadOnlyList<BakedColumn> select, bool trimStrings)
     {
         var args = string.Join(
             ", ",
-            plan.CtorArgs.Select(a => $"{a.Name}: {ReadExpression(spec.Select[a.Ordinal], a.Ordinal, trimStrings)}"));
+            plan.CtorArgs.Select(a => $"{a.Name}: {ReadExpression(select[a.Ordinal], a.Ordinal, trimStrings)}"));
         var body = $"new {plan.TargetFq}({args})";
         if (plan.PropAssigns.Count > 0)
         {
             body += " { " + string.Join(
                 ", ",
-                plan.PropAssigns.Select(a => $"{a.Name} = {ReadExpression(spec.Select[a.Ordinal], a.Ordinal, trimStrings)}")) + " }";
+                plan.PropAssigns.Select(a => $"{a.Name} = {ReadExpression(select[a.Ordinal], a.Ordinal, trimStrings)}")) + " }";
         }
 
         return body;
@@ -424,7 +474,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             var first = group.First();
             // The target's real namespace, not the call site's -- a bound T is
             // routinely declared in another assembly or layer.
-            EmitMapper(sb, name, first.MapperPlan!.TargetFq, MapperBody(first.MapperPlan!, first.Spec!, trimStrings));
+            EmitMapper(sb, name, first.MapperPlan!.TargetFq, MapperBody(first.MapperPlan!, first.Spec!.Select, trimStrings));
         }
 
         sb.AppendLine("}");
