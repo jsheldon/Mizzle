@@ -636,10 +636,13 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
     private static void EmitMapper(StringBuilder sb, string mapperName, string resultType, string body)
     {
-        sb.Append("    public static class ");
+        // internal, not public: the mapper is only ever called by the interceptor in
+        // the same assembly, and a public method returning an internal projection
+        // target is CS0050.
+        sb.Append("    internal static class ");
         sb.AppendLine(mapperName);
         sb.AppendLine("    {");
-        sb.Append("        public static ");
+        sb.Append("        internal static ");
         sb.Append(resultType);
         sb.AppendLine(" Read(global::System.Data.Common.DbDataReader r)");
         sb.Append("            => ");
