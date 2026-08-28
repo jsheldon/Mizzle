@@ -65,9 +65,10 @@ internal sealed class BakedTable
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
-    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null)
+    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null)
     {
         LeftExpression = leftExpression;
+        ConditionalIndex = conditionalIndex;
         LeftAlias = leftAlias;
         LeftDbName = leftDbName;
         RightAlias = rightAlias;
@@ -76,6 +77,10 @@ internal sealed class BakedCondition
 
     // Set when the left side is an aggregate rather than a column, as in HAVING.
     public string? LeftExpression { get; }
+
+    // Set for a WhereIf predicate: the bit in the shape mask that decides whether
+    // this condition is part of a given variant. Null means always applied.
+    public int? ConditionalIndex { get; }
 
     public string LeftAlias { get; }
     public string LeftDbName { get; }
@@ -128,7 +133,8 @@ internal sealed class BakedQuerySpec
         bool recursiveWith,
         IReadOnlyList<(string Alias, string DbName)> groupBy,
         IReadOnlyList<BakedCondition> having,
-        IReadOnlyList<BakedQuerySpec> unionAll)
+        IReadOnlyList<BakedQuerySpec> unionAll,
+        int conditionalCount)
     {
         IsPostgres = isPostgres;
         From = from;
@@ -144,6 +150,7 @@ internal sealed class BakedQuerySpec
         GroupBy = groupBy;
         Having = having;
         UnionAll = unionAll;
+        ConditionalCount = conditionalCount;
     }
 
     public bool IsPostgres { get; }
@@ -159,6 +166,10 @@ internal sealed class BakedQuerySpec
     public bool RecursiveWith { get; }
     public IReadOnlyList<(string Alias, string DbName)> GroupBy { get; }
     public IReadOnlyList<BakedCondition> Having { get; }
+
+    // How many WhereIf predicates the chain has; the generator bakes one variant
+    // per combination.
+    public int ConditionalCount { get; }
     public IReadOnlyList<BakedQuerySpec> UnionAll { get; }
 }
 
@@ -168,15 +179,22 @@ internal sealed class BakedQuerySpec
 // be baked (SQL Server paging without ORDER BY).
 internal static class BakedSqlEmitter
 {
-    public static string? Emit(BakedQuerySpec spec)
+    // The number of conditionals past which the combinations stop being worth
+    // baking; such a chain falls back to the runtime path.
+    public const int MaxBakedConditionals = 4;
+
+    public static string? Emit(BakedQuerySpec spec) => Emit(spec, ulong.MaxValue);
+
+    // mask: one bit per WhereIf, in chain order. A clear bit omits that predicate.
+    public static string? Emit(BakedQuerySpec spec, ulong mask)
     {
         var slot = 0;
-        return Emit(spec, ref slot, includeWith: true);
+        return Emit(spec, ref slot, includeWith: true, mask);
     }
 
     // Parameterizer order for a select is: With CTEs -> select items -> joins ->
     // where, so a CTE body's binds must take the lowest slots.
-    private static string? Emit(BakedQuerySpec spec, ref int slot, bool includeWith)
+    private static string? Emit(BakedQuerySpec spec, ref int slot, bool includeWith, ulong mask = ulong.MaxValue)
     {
         if (!spec.IsPostgres && (spec.Limit is not null || spec.Offset is not null) && spec.OrderBy.Count == 0)
         {
@@ -196,7 +214,7 @@ internal static class BakedSqlEmitter
 
                 sql.Append(Quote(spec, spec.With[i].Name));
                 sql.Append(" AS (");
-                var body = Emit(spec.With[i].Body, ref slot, includeWith: false);
+                var body = Emit(spec.With[i].Body, ref slot, includeWith: false, mask);
                 if (body is null)
                 {
                     return null;
@@ -232,10 +250,13 @@ internal static class BakedSqlEmitter
             sql.Append(FoldConditions(spec, join.On, ref slot));
         }
 
-        if (spec.Where.Count > 0)
+        var where = spec.Where
+            .Where(c => c.ConditionalIndex is not { } bit || (mask & (1UL << bit)) != 0)
+            .ToList();
+        if (where.Count > 0)
         {
             sql.Append(" WHERE ");
-            sql.Append(FoldConditions(spec, spec.Where, ref slot));
+            sql.Append(FoldConditions(spec, where, ref slot));
         }
 
         if (spec.GroupBy.Count > 0)
@@ -287,7 +308,7 @@ internal static class BakedSqlEmitter
 
         foreach (var union in spec.UnionAll)
         {
-            var body = Emit(union, ref slot, includeWith: false);
+            var body = Emit(union, ref slot, includeWith: false, mask);
             if (body is null)
             {
                 return null;

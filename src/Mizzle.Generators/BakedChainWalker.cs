@@ -227,6 +227,19 @@ internal static class BakedChainWalker
                     state.With.Add(cte);
                     state.RecursiveWith |= name == "WithRecursive";
                     break;
+                case "WhereIf" when args.Count == 2:
+                    if (state.ResolveCondition(args[1].Expression) is not { } conditional)
+                    {
+                        return null;
+                    }
+
+                    state.Where.Add(new BakedCondition(
+                        conditional.LeftAlias, conditional.LeftDbName,
+                        conditional.RightAlias, conditional.RightDbName,
+                        conditional.LeftExpression,
+                        state.ConditionalCount));
+                    state.ConditionalCount++;
+                    break;
                 case "Having" when args.Count == 1:
                     if (state.ResolveHavingCondition(args[0].Expression) is not { } having)
                     {
@@ -251,7 +264,9 @@ internal static class BakedChainWalker
             }
         }
 
-        if (state.From is null || state.Select.Count == 0)
+        if (state.From is null
+            || state.Select.Count == 0
+            || state.ConditionalCount > BakedSqlEmitter.MaxBakedConditionals)
         {
             return null;
         }
@@ -284,7 +299,8 @@ internal static class BakedChainWalker
             state.RecursiveWith,
             state.GroupBy,
             state.Having,
-            state.UnionAll);
+            state.UnionAll,
+            state.ConditionalCount);
         }
         finally
         {
@@ -425,6 +441,7 @@ internal static class BakedChainWalker
         public List<BakedCte> With { get; } = [];
         public List<(string Alias, string DbName)> GroupBy { get; } = [];
         public List<BakedCondition> Having { get; } = [];
+        public int ConditionalCount { get; set; }
         public List<BakedQuerySpec> UnionAll { get; } = [];
         public bool RecursiveWith { get; set; }
         public int? Limit { get; set; }

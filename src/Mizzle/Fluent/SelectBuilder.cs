@@ -20,11 +20,12 @@ public sealed class SelectBuilder
     private readonly EquatableList<SelectQuery> _unionAll;
     private readonly EquatableList<Expr> _groupBy;
     private readonly Expr? _having;
+    private readonly int _conditionalCount;
 
     private readonly IQueryExecutor? _executor;
 
     public SelectBuilder(IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(executor, overlay, [], null, [], null, [], null, null, false, [], false, [], [], null)
+        : this(executor, overlay, [], null, [], null, [], null, null, false, [], false, [], [], null, 0, 0UL)
     {
     }
 
@@ -43,7 +44,9 @@ public sealed class SelectBuilder
         bool recursiveWith,
         EquatableList<SelectQuery> unionAll,
         EquatableList<Expr> groupBy,
-        Expr? having)
+        Expr? having,
+        int conditionalCount,
+        ulong conditionalMask)
     {
         _executor = executor;
         Overlay = overlay;
@@ -60,9 +63,18 @@ public sealed class SelectBuilder
         _unionAll = unionAll;
         _groupBy = groupBy;
         _having = having;
+        _conditionalCount = conditionalCount;
+        ConditionalMask = conditionalMask;
     }
 
     public QueryOptions? Overlay { get; }
+
+    /// <summary>
+    ///     Which <see cref="WhereIf(bool, Expr)"/> predicates were applied, one bit per
+    ///     call in chain order. Generated interceptors use it to select the baked SQL
+    ///     for this shape; there is no reason to read it otherwise.
+    /// </summary>
+    public ulong ConditionalMask { get; }
 
     /// <summary>
     ///     The select list. Columns convert implicitly and carry their <c>As(...)</c>
@@ -103,6 +115,24 @@ public sealed class SelectBuilder
 
     public SelectBuilder Where(IColumn column, object? value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
+
+    /// <summary>
+    ///     Applies <paramref name="predicate"/> only when <paramref name="condition"/>
+    ///     is true, without falling off the compiled path: the generator bakes the SQL
+    ///     for each combination of conditionals and the interceptor picks one.
+    /// </summary>
+    /// <remarks>
+    ///     The predicate must be statically visible, as anywhere else. Past
+    ///     <c>MaxBakedConditionals</c> calls the combinations stop being worth baking
+    ///     and the query falls back to runtime compilation.
+    /// </remarks>
+    public SelectBuilder WhereIf(bool condition, Expr predicate)
+    {
+        var index = _conditionalCount;
+        var mask = condition ? ConditionalMask | (1UL << index) : ConditionalMask;
+        var applied = condition ? Where(predicate) : this;
+        return applied.Copy(conditionalCount: index + 1, conditionalMask: mask);
+    }
 
     public SelectBuilder Where(params Expr[] conditions)
         => conditions.Length switch
@@ -376,6 +406,8 @@ public sealed class SelectBuilder
         EquatableList<SelectQuery>? unionAll = null,
         EquatableList<Expr>? groupBy = null,
         Expr? having = null,
+        int? conditionalCount = null,
+        ulong? conditionalMask = null,
         QueryOptions? overlay = null)
         => new(
             _executor,
@@ -392,5 +424,7 @@ public sealed class SelectBuilder
             recursiveWith ?? _recursiveWith,
             unionAll ?? _unionAll,
             groupBy ?? _groupBy,
-            having ?? _having);
+            having ?? _having,
+            conditionalCount ?? _conditionalCount,
+            conditionalMask ?? ConditionalMask);
 }

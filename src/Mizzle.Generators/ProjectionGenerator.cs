@@ -166,7 +166,12 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             .FirstOrDefault()?.Name.ToString() ?? "";
 
         var spec = BakedChainWalker.TryGetSpec(invocation, model, out var hasReportedColumnError);
-        var sql = spec is null ? null : BakedSqlEmitter.Emit(spec);
+        var variants = spec is null ? null : EmitVariants(spec);
+        // The grouping key: two call sites share an interceptor only when every
+        // variant matches.
+        var sql = variants is null
+            ? null
+            : string.Join("", variants.Select(v => v.Mask + ":" + v.Sql));
         if (spec is null || sql is null)
         {
             // Only unbound T deserves MIZ007. A bound T on a dynamic chain
@@ -174,7 +179,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             // A table whose column already reported MIZ008/MIZ009 is silent
             // either way: that diagnostic points at the real line.
             return bound is null && !hasReportedColumnError
-                ? new ProjectionSite(typeName, ns, terminator, null, null, null, null, [("MIZ007", [typeName])], invocation.GetLocation())
+                ? new ProjectionSite(typeName, ns, terminator, null, null, null, null, null, [("MIZ007", [typeName])], invocation.GetLocation())
                 : null;
         }
 
@@ -205,7 +210,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         var attribute = location.GetInterceptsLocationAttributeSyntax();
 #pragma warning restore RSEXPERIMENTAL002
-        return new ProjectionSite(typeName, ns, terminator, spec, sql, attribute, mapperPlan, errors, invocation.GetLocation());
+        return new ProjectionSite(typeName, ns, terminator, spec, sql, variants, attribute, mapperPlan, errors, invocation.GetLocation());
     }
 
     // Validation only: reports MIZ003/004/005/006/010 against the Returning(...)
@@ -238,7 +243,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         BuildMapPlan(bound, returning, model.Compilation, errors);
         return errors.Count == 0
             ? null
-            : new ProjectionSite(bound.Name, "", "Write", null, null, null, null, errors, invocation.GetLocation());
+            : new ProjectionSite(bound.Name, "", "Write", null, null, null, null, null, errors, invocation.GetLocation());
     }
 
     private static bool HasMappableMembers(INamedTypeSymbol target)
@@ -444,6 +449,24 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         public List<(string Name, int Ordinal, string? ExpressionType, bool Nullable)> PropAssigns { get; }
     }
 
+    private static List<(ulong Mask, string Sql)>? EmitVariants(BakedQuerySpec spec)
+    {
+        var variants = new List<(ulong Mask, string Sql)>();
+        var combinations = 1UL << spec.ConditionalCount;
+        for (var mask = 0UL; mask < combinations; mask++)
+        {
+            var sql = BakedSqlEmitter.Emit(spec, mask);
+            if (sql is null)
+            {
+                return null;
+            }
+
+            variants.Add((mask, sql));
+        }
+
+        return variants;
+    }
+
     private static bool IsNullable(ITypeSymbol type)
         => type.NullableAnnotation == NullableAnnotation.Annotated
             || type.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T;
@@ -533,8 +556,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         var interceptorGroups = generated
             .SelectMany(g => g.GroupBy(s => (s.Sql, s.Terminator)).Select(bySql =>
-                (Sites: bySql.AsEnumerable(), Mapper: GeneratedMapperName(g.Key.TypeName), Sql: bySql.Key.Sql!, Terminator: bySql.Key.Terminator)))
-            .Concat(mapped.Select(m => (Sites: m.Group.AsEnumerable(), Mapper: m.Name, Sql: m.Group.Key.Sql!, Terminator: m.Group.Key.Terminator)))
+                (Sites: bySql.AsEnumerable(), Mapper: GeneratedMapperName(g.Key.TypeName), Variants: bySql.First().Variants!, Terminator: bySql.Key.Terminator)))
+            .Concat(mapped.Select(m => (Sites: m.Group.AsEnumerable(), Mapper: m.Name, Variants: m.Group.First().Variants!, Terminator: m.Group.Key.Terminator)))
             .ToList();
         for (var i = 0; i < interceptorGroups.Count; i++)
         {
@@ -543,7 +566,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 sb.AppendLine();
             }
 
-            EmitInterceptor(sb, i, interceptorGroups[i].Terminator, interceptorGroups[i].Mapper, interceptorGroups[i].Sql, interceptorGroups[i].Sites.Select(s => s.Attribute!).Distinct());
+            EmitInterceptor(sb, i, interceptorGroups[i].Terminator, interceptorGroups[i].Mapper, interceptorGroups[i].Variants, interceptorGroups[i].Sites.Select(s => s.Attribute!).Distinct());
         }
 
         sb.AppendLine("    }");
@@ -552,7 +575,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         context.AddSource("Mizzle.Projections.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
-    private static void EmitInterceptor(StringBuilder sb, int index, string terminator, string mapper, string sql, IEnumerable<string> attributes)
+    private static void EmitInterceptor(StringBuilder sb, int index, string terminator, string mapper, List<(ulong Mask, string Sql)> variants, IEnumerable<string> attributes)
     {
         const string listOfT = "global::System.Collections.Generic.IReadOnlyList<T>";
         var returnType = terminator switch
@@ -583,6 +606,29 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         sb.AppendLine("            global::System.Threading.CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
+        if (variants.Count == 1)
+        {
+            sb.Append("            var sql = ");
+            sb.Append(SymbolDisplay.FormatLiteral(variants[0].Sql, quote: true));
+            sb.AppendLine(";");
+        }
+        else
+        {
+            sb.AppendLine("            var sql = builder.ConditionalMask switch");
+            sb.AppendLine("            {");
+            foreach (var (mask, variantSql) in variants)
+            {
+                sb.Append("                ");
+                sb.Append(mask);
+                sb.Append("UL => ");
+                sb.Append(SymbolDisplay.FormatLiteral(variantSql, quote: true));
+                sb.AppendLine(",");
+            }
+
+            sb.AppendLine("                _ => throw new global::System.InvalidOperationException(\"Unknown conditional query shape.\")");
+            sb.AppendLine("            };");
+        }
+
         if (terminator == "Page")
         {
             sb.Append("            var page = await builder.ToPageAsync(global::Mizzle.Generated.Projections.");
@@ -603,8 +649,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             return;
         }
 
-        sb.Append("            var rows = await builder.ToListPrecompiledAsync(");
-        sb.Append(SymbolDisplay.FormatLiteral(sql, quote: true));
+        sb.Append("            var rows = await builder.ToListPrecompiledAsync(sql");
         sb.Append(", global::Mizzle.Generated.Projections.");
         sb.Append(mapper);
         sb.AppendLine(".Read, cancellationToken);");
@@ -704,6 +749,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             string terminator,
             BakedQuerySpec? spec,
             string? sql,
+            List<(ulong Mask, string Sql)>? variants,
             string? attribute,
             MapperPlan? mapperPlan,
             List<(string Id, string[] Args)> errors,
@@ -714,6 +760,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             Terminator = terminator;
             Spec = spec;
             Sql = sql;
+            Variants = variants;
             Attribute = attribute;
             MapperPlan = mapperPlan;
             Errors = errors;
@@ -725,6 +772,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         public string Terminator { get; }
         public BakedQuerySpec? Spec { get; }
         public string? Sql { get; }
+        public List<(ulong Mask, string Sql)>? Variants { get; }
         public string? Attribute { get; }
         public MapperPlan? MapperPlan { get; }
         public List<(string Id, string[] Args)> Errors { get; }

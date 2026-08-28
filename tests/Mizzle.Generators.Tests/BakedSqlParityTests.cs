@@ -41,14 +41,15 @@ public sealed class BakedSqlParityTests
     private static string BakedSql(string callSite)
     {
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, callSite));
-        const string open = "ToListPrecompiledAsync(";
-        const string close = ", global::Mizzle.Generated.Projections.";
+        // A single-shape query assigns its SQL literal directly; a conditional one
+        // selects between variants, which these tests do not cover.
+        const string open = "            var sql = ";
         var start = generated.IndexOf(open, StringComparison.Ordinal);
-        Assert.True(start >= 0, "no baked call found in generated output");
+        Assert.True(start >= 0, "no baked SQL assignment found in generated output");
         start += open.Length;
-        var end = generated.IndexOf(close, start, StringComparison.Ordinal);
-        Assert.True(end > start, "no baked SQL literal found in generated output");
-        return generated.Substring(start, end - start);
+        var lineEnd = generated.IndexOf('\n', start);
+        Assert.True(lineEnd > start, "baked SQL assignment was not terminated");
+        return generated.Substring(start, lineEnd - start).TrimEnd('\r').TrimEnd(';');
     }
 
     [Fact]
