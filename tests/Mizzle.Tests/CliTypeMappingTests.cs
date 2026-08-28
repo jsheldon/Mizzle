@@ -28,6 +28,26 @@ public sealed class CliTypeMappingTests
         Assert.True(mapping.NeedsLength);
     }
 
+    [Theory]
+    [InlineData("smallint", "short", "SmallInt")]
+    [InlineData("decimal", "decimal", "Decimal")]
+    [InlineData("numeric", "decimal", "Numeric")]
+    [InlineData("real", "float", "Real")]
+    [InlineData("text", "string", "Text")]
+    [InlineData("float", "double", "Float")]
+    [InlineData("tinyint", "byte", "TinyInt")]
+    [InlineData("ntext", "string", "NText")]
+    public void Sql_server_common_legacy_types_are_supported(string storeType, string clrType, string factory)
+    {
+        var column = new ColumnInfo("dbo", "legacy", "value", storeType, storeType, null, true, false, false);
+
+        var mapping = TypeMappings.Resolve(ProviderKind.SqlServer, column);
+
+        Assert.Equal(clrType, mapping.ClrType);
+        Assert.Equal(factory, mapping.Factory);
+        Assert.False(mapping.NeedsLength);
+    }
+
     [Fact]
     public void Unsupported_type_fails_with_clear_code()
     {

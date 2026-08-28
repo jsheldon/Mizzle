@@ -47,4 +47,33 @@ public sealed class CliTableClassWriterTests
         Assert.Contains("public sealed class Notes : SqlTable<Notes>", file.Source, StringComparison.Ordinal);
         Assert.Contains("public SqlColumn<string> Body { get; } = NVarCharMax(\"body\");", file.Source, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Writes_sql_server_common_legacy_types()
+    {
+        var table = new TableInfo(
+            "dbo",
+            "legacy_values",
+            [
+                new ColumnInfo("dbo", "legacy_values", "small_value", "smallint", "smallint", null, false, false, false),
+                new ColumnInfo("dbo", "legacy_values", "amount", "decimal", "decimal", null, false, false, false),
+                new ColumnInfo("dbo", "legacy_values", "ratio", "numeric", "numeric", null, true, false, false),
+                new ColumnInfo("dbo", "legacy_values", "real_value", "real", "real", null, true, false, false),
+                new ColumnInfo("dbo", "legacy_values", "description", "text", "text", null, true, false, false),
+                new ColumnInfo("dbo", "legacy_values", "score", "float", "float", null, true, false, false),
+                new ColumnInfo("dbo", "legacy_values", "tiny_value", "tinyint", "tinyint", null, true, false, false),
+                new ColumnInfo("dbo", "legacy_values", "notes", "ntext", "ntext", null, true, false, false),
+            ]);
+
+        var file = TableClassWriter.Write(ProviderKind.SqlServer, "Demo.Data", table);
+
+        Assert.Contains("public SqlColumn<short> SmallValue { get; } = SmallInt(\"small_value\").NotNull();", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<decimal> Amount { get; } = Decimal(\"amount\").NotNull();", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<decimal> Ratio { get; } = Numeric(\"ratio\");", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<float> RealValue { get; } = Real(\"real_value\");", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<string> Description { get; } = Text(\"description\");", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<double> Score { get; } = Float(\"score\");", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<byte> TinyValue { get; } = TinyInt(\"tiny_value\");", file.Source, StringComparison.Ordinal);
+        Assert.Contains("public SqlColumn<string> Notes { get; } = NText(\"notes\");", file.Source, StringComparison.Ordinal);
+    }
 }

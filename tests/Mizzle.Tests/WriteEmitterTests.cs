@@ -39,6 +39,24 @@ public sealed class WriteEmitterTests
     }
 
     [Fact]
+    public void SqlServer_insert_output_alias()
+    {
+        var v = new ParamRef(0, typeof(string));
+        var q = new InsertQuery(
+            Into: new FromSource("users", "dbo", "u"),
+            Columns: ["email"],
+            ValuesRows: [[v]],
+            FromSelect: null,
+            Returning: [new SelectItem(new ColumnRef("u", "id", typeof(int)), "UserId")],
+            With: [],
+            RecursiveWith: false);
+        var sql = new SqlServerEmitter().Emit(q, ["a@b.com"]);
+        Assert.Equal(
+            "INSERT INTO [dbo].[users] ([email]) OUTPUT INSERTED.[id] AS [UserId] VALUES (@p0)",
+            sql.Sql);
+    }
+
+    [Fact]
     public void Postgres_update_set_where()
     {
         var email = new ParamRef(0, typeof(string));

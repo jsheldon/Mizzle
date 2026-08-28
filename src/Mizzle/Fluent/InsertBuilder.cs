@@ -14,9 +14,10 @@ public sealed class InsertBuilder
     private readonly EquatableList<string> _currentColumns;
     private readonly SelectQuery? _fromSelect;
     private readonly EquatableList<SelectItem> _returning;
+    private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
 
     public InsertBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, executor, overlay, [], [], [], [], null, [])
+        : this(table, executor, overlay, [], [], [], [], null, [], [])
     {
     }
 
@@ -29,7 +30,8 @@ public sealed class InsertBuilder
         EquatableList<Expr> currentRow,
         EquatableList<string> currentColumns,
         SelectQuery? fromSelect,
-        EquatableList<SelectItem> returning)
+        EquatableList<SelectItem> returning,
+        EquatableList<RuntimeProjectionColumn> returningColumns)
     {
         _table = table;
         _executor = executor;
@@ -40,6 +42,7 @@ public sealed class InsertBuilder
         _currentColumns = currentColumns;
         _fromSelect = fromSelect;
         _returning = returning;
+        _returningColumns = returningColumns;
     }
 
     public QueryOptions? Overlay { get; }
@@ -89,7 +92,9 @@ public sealed class InsertBuilder
     }
 
     public InsertBuilder Returning(params IColumn[] columns)
-        => Copy(returning: [..columns.Select(c => new SelectItem(c.ToRef(), null))]);
+        => Copy(
+            returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
+            returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
 
     public InsertBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
@@ -135,8 +140,61 @@ public sealed class InsertBuilder
         CancellationToken cancellationToken = default)
         => Executor().QueryAsync(Build(), map, Overlay, cancellationToken);
 
+    public Task<IReadOnlyList<T>> ToListAsync<T>(CancellationToken cancellationToken = default)
+    {
+        EnsureReturningProjection();
+        return ToListAsync(reader => RuntimeProjectionMapper.Read<T>(_returningColumns, reader), cancellationToken);
+    }
+
+    public async Task<T> FirstAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        if (rows.Count == 0)
+        {
+            throw new InvalidOperationException("Sequence contains no elements.");
+        }
+
+        return rows[0];
+    }
+
+    public async Task<T?> FirstOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count == 0 ? default : rows[0];
+    }
+
+    public async Task<T> SingleAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count switch
+        {
+            0 => throw new InvalidOperationException("Sequence contains no elements."),
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element.")
+        };
+    }
+
+    public async Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
+    {
+        var rows = await ToListAsync<T>(cancellationToken);
+        return rows.Count switch
+        {
+            0 => default,
+            1 => rows[0],
+            _ => throw new InvalidOperationException("Sequence contains more than one element.")
+        };
+    }
+
     private IQueryExecutor Executor()
         => _executor ?? throw new InvalidOperationException("This query is not bound to a database.");
+
+    private void EnsureReturningProjection()
+    {
+        if (_returningColumns.Count == 0)
+        {
+            throw new InvalidOperationException("Typed insert projection requires Returning(...).");
+        }
+    }
 
     private InsertBuilder Copy(
         EquatableList<string>? columns = null,
@@ -145,6 +203,7 @@ public sealed class InsertBuilder
         EquatableList<string>? currentColumns = null,
         SelectQuery? fromSelect = null,
         EquatableList<SelectItem>? returning = null,
+        EquatableList<RuntimeProjectionColumn>? returningColumns = null,
         QueryOptions? overlay = null,
         bool resetCurrent = false)
         => new(
@@ -156,5 +215,6 @@ public sealed class InsertBuilder
             resetCurrent ? new EquatableList<Expr>([]) : currentRow ?? _currentRow,
             resetCurrent ? new EquatableList<string>([]) : currentColumns ?? _currentColumns,
             fromSelect ?? _fromSelect,
-            returning ?? _returning);
+            returning ?? _returning,
+            returningColumns ?? _returningColumns);
 }

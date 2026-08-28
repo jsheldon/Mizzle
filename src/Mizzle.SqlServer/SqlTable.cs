@@ -16,13 +16,29 @@ public abstract class SqlTable<TSelf> : Table<TSelf>
 
     protected static SqlColumn<int> Int(string name) => new(name);
 
+    protected static SqlColumn<short> SmallInt(string name) => new(name);
+
+    protected static SqlColumn<byte> TinyInt(string name) => new(name);
+
     protected static SqlColumn<int> Identity(string name) => new(name);
 
     protected static SqlColumn<string> NVarCharMax(string name) => new(name);
 
+    protected static SqlColumn<string> NText(string name) => new(name);
+
+    protected static SqlColumn<string> Text(string name) => new(name);
+
     protected static SqlColumn<string> Char(string name, int length) => new SqlColumn<string>(name).WithLength(length);
 
     protected static SqlColumn<string> VarChar(string name, int length) => new SqlColumn<string>(name).WithLength(length);
+
+    protected static SqlColumn<decimal> Decimal(string name) => new(name);
+
+    protected static SqlColumn<decimal> Numeric(string name) => new(name);
+
+    protected static SqlColumn<float> Real(string name) => new(name);
+
+    protected static SqlColumn<double> Float(string name) => new(name);
 
     protected static SqlColumn<DateTime> DateTime(string name) => new(name);
 

@@ -258,9 +258,14 @@ internal static class TableFacts
 
         storageReader = FactoryName(member) switch
         {
-            "Text" or "NVarChar" or "NVarCharMax" or "Char" or "VarChar" or "Varchar" => "GetString",
+            "Text" or "NText" or "NVarChar" or "NVarCharMax" or "Char" or "VarChar" or "Varchar" => "GetString",
             "Integer" or "Int" or "Identity" => "GetInt32",
+            "SmallInt" => "GetInt16",
+            "TinyInt" => "GetByte",
             "BigInt" => "GetInt64",
+            "Decimal" or "Numeric" => "GetDecimal",
+            "Real" => "GetFloat",
+            "Float" => "GetDouble",
             "Boolean" or "Bit" => "GetBoolean",
             "DateTime" or "DateTime2" => "GetDateTime",
             "Timestamptz" => "GetFieldValue<global::System.DateTimeOffset>",

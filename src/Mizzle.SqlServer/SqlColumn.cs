@@ -73,10 +73,9 @@ public sealed class SqlColumn<T> : Column<T>
     // can bake the read conversion into generated mappers.
     public SqlColumn<TResult> Map<TResult>(Func<T, TResult> read, Func<TResult, T> write)
     {
-        _ = read; // generator-facing; runtime reads use generated or hand-written mappers
         var column = new SqlColumn<TResult>(Name);
         column.CopyMetadataFrom(this);
-        column.SetConverter(typeof(T), value => write((TResult)value!));
+        column.SetConverter(typeof(T), value => read((T)value!), value => write((TResult)value!));
         return column;
     }
 }

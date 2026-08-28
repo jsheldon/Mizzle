@@ -137,7 +137,8 @@ public sealed class SqlServerEmitter : ISqlEmitter
             throw new NotSupportedException("SQL Server OUTPUT requires a column reference.");
         }
 
-        return $"{source}.{Quote(column.ColumnName)}";
+        var output = $"{source}.{Quote(column.ColumnName)}";
+        return item.Alias is null ? output : $"{output} AS {Quote(item.Alias)}";
     }
 
     private static string Table(FromSource from)

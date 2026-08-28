@@ -33,3 +33,8 @@ internal interface IBindableColumn
 {
     void Bind(string tableAlias);
 }
+
+internal interface IRuntimeReadableColumn
+{
+    object? ReadValue(System.Data.Common.DbDataReader reader, int ordinal);
+}

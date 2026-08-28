@@ -2,7 +2,7 @@ using Mizzle.Ir;
 
 namespace Mizzle.Schema;
 
-public abstract class Column<T> : IColumn, IBindableColumn
+public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColumn
 {
     protected Column(string name, DialectKind dialect)
     {
@@ -37,11 +37,14 @@ public abstract class Column<T> : IColumn, IBindableColumn
 
     internal Type? StorageClrType { get; private set; }
 
+    internal Func<object?, object?>? ReadConverter { get; private set; }
+
     internal Func<object?, object?>? WriteConverter { get; private set; }
 
-    internal void SetConverter(Type storageClrType, Func<object?, object?> write)
+    internal void SetConverter(Type storageClrType, Func<object?, object?> read, Func<object?, object?> write)
     {
         StorageClrType = storageClrType;
+        ReadConverter = read;
         WriteConverter = write;
     }
 
@@ -67,8 +70,20 @@ public abstract class Column<T> : IColumn, IBindableColumn
         CopyMetadataFrom(source);
         TableAlias = source.TableAlias;
         StorageClrType = source.StorageClrType;
+        ReadConverter = source.ReadConverter;
         WriteConverter = source.WriteConverter;
         ProjectionName = source.ProjectionName;
+    }
+
+    object? IRuntimeReadableColumn.ReadValue(System.Data.Common.DbDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetValue(ordinal);
+        return ReadConverter is null ? value : ReadConverter(value);
     }
 
     internal void SetProjectionName(string name) => ProjectionName = name;

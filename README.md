@@ -57,8 +57,9 @@ when one table needs another name for a self-join or repeated lookup.
 
 PostgreSQL tables include factories such as `Text`, `Varchar`, `Char`,
 `Integer`, `BigInt`, `Boolean`, `Uuid`, `Date`, `Timestamptz`, and `Identity`.
-SQL Server tables include `NVarChar`, `NVarCharMax`, `VarChar`, `Char`, `Int`,
-`BigInt`, `Bit`, `UniqueIdentifier`, `Date`, `DateTime`, `DateTime2`,
+SQL Server tables include `NVarChar`, `NVarCharMax`, `VarChar`, `Char`, `Text`,
+`NText`, `Int`, `SmallInt`, `TinyInt`, `BigInt`, `Decimal`, `Numeric`, `Real`,
+`Float`, `Bit`, `UniqueIdentifier`, `Date`, `DateTime`, `DateTime2`,
 `Timestamp`, and `Identity`.
 
 Register and query:
@@ -85,7 +86,12 @@ var profile = await db.Select(users.Id, users.Email)
 var id = await db.InsertInto(users)
     .Value(users.Email, "new@example.com")
     .Returning(users.Id)
-    .ToListAsync(r => r.GetInt32(0));
+    .SingleAsync<int>();
+
+var inserted = await db.InsertInto(users)
+    .Value(users.Email, "new@example.com")
+    .Returning(users.Id, users.Email)
+    .SingleAsync<UserRow>();
 
 await db.Transaction(async tx =>
 {
