@@ -8,7 +8,7 @@ public sealed class SqlServerSelectTests : IClassFixture<SqlServerFixture>
 
     public SqlServerSelectTests(SqlServerFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Selects_inserted_email()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();

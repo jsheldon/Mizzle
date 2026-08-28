@@ -256,22 +256,31 @@ internal static class TableFacts
             return MapStatus.NullableResult;
         }
 
+        // Timestamp means different things per dialect: SQL Server rowversion is
+        // byte[], Postgres timestamp-without-zone is a DateTime.
+        var isSqlServerColumn = member.Type is INamedTypeSymbol storageType
+            && TryColumn(storageType, out _, out var sqlColumn)
+            && sqlColumn;
+
         storageReader = FactoryName(member) switch
         {
+            "Timestamp" => isSqlServerColumn ? "GetFieldValue<byte[]>" : "GetDateTime",
             "Text" or "NText" or "NVarChar" or "NVarCharMax" or "Char" or "VarChar" or "Varchar" => "GetString",
+            "Json" or "Jsonb" => "GetString",
             "Integer" or "Int" or "Identity" => "GetInt32",
             "SmallInt" => "GetInt16",
             "TinyInt" => "GetByte",
             "BigInt" => "GetInt64",
-            "Decimal" or "Numeric" => "GetDecimal",
+            "Decimal" or "Numeric" or "Money" => "GetDecimal",
             "Real" => "GetFloat",
-            "Float" => "GetDouble",
+            "Float" or "DoublePrecision" => "GetDouble",
             "Boolean" or "Bit" => "GetBoolean",
             "DateTime" or "DateTime2" => "GetDateTime",
             "Timestamptz" => "GetFieldValue<global::System.DateTimeOffset>",
             "Date" => "GetFieldValue<global::System.DateOnly>",
+            "Time" => "GetFieldValue<global::System.TimeOnly>",
             "Uuid" or "UniqueIdentifier" => "GetGuid",
-            "Timestamp" => "GetFieldValue<byte[]>",
+            "Bytea" => "GetFieldValue<byte[]>",
             _ => null
         };
         if (storageReader is null || mapCall.ArgumentList.Arguments.Count < 2)

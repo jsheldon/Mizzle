@@ -9,7 +9,7 @@ public sealed class BenchmarkSmokeTests : IClassFixture<PostgresFixture>
 
     public BenchmarkSmokeTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Pk_select_is_not_catastrophically_slower_than_dapper()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();

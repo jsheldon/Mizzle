@@ -6,7 +6,7 @@ public sealed class PostgresTransactionTests : IClassFixture<PostgresFixture>
 
     public PostgresTransactionTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Timeout_overlay_does_not_mutate_global_options()
     {
         var options = new MizzleOptions { CommandTimeout = TimeSpan.FromSeconds(30) };
@@ -17,7 +17,7 @@ public sealed class PostgresTransactionTests : IClassFixture<PostgresFixture>
         Assert.Equal(TimeSpan.FromSeconds(5), builder.Overlay!.CommandTimeout);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task Transaction_commits_insert()
     {
         await EnsureUsersTable();
@@ -34,7 +34,7 @@ public sealed class PostgresTransactionTests : IClassFixture<PostgresFixture>
         Assert.Contains("tx@b.com", rows);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task Transaction_rolls_back_on_throw()
     {
         await EnsureUsersTable();

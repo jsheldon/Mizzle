@@ -6,7 +6,7 @@ public sealed class PostgresInsertTests : IClassFixture<PostgresFixture>
 
     public PostgresInsertTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Insert_returning_maps_typed_record()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();

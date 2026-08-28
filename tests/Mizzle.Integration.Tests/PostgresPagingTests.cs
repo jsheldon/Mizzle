@@ -6,7 +6,7 @@ public sealed class PostgresPagingTests : IClassFixture<PostgresFixture>
 
     public PostgresPagingTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task ToPageAsync_sets_has_more_and_total()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();

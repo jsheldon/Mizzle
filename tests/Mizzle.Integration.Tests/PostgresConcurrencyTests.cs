@@ -6,7 +6,7 @@ public sealed class PostgresConcurrencyTests : IClassFixture<PostgresFixture>
 
     public PostgresConcurrencyTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Expect_mismatch_throws_when_no_rows_updated()
     {
         await EnsureExpectUsersTable();
@@ -22,7 +22,7 @@ public sealed class PostgresConcurrencyTests : IClassFixture<PostgresFixture>
         Assert.Equal(0, ex.Actual);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task Expect_succeeds_when_one_row_updated()
     {
         await EnsureExpectUsersTable();
@@ -47,7 +47,7 @@ public sealed class PostgresConcurrencyTests : IClassFixture<PostgresFixture>
         Assert.Equal(1, affected);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task LockAsync_is_reentrant_on_same_transaction()
     {
         var db = new PostgresDb(_fx.DataSource);

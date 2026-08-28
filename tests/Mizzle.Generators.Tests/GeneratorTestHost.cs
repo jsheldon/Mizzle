@@ -52,7 +52,7 @@ internal static class GeneratorTestHost
     {
         var parseOptions = ParseOptions();
         var compilation = CreateCompilation([source], parseOptions);
-        var analyzers = ImmutableArray.Create<DiagnosticAnalyzer>(new StrictAnalyzer());
+        var analyzers = ImmutableArray.Create<DiagnosticAnalyzer>(new StrictAnalyzer(), new TableUsageAnalyzer());
         var options = new AnalyzerOptions(ImmutableArray<AdditionalText>.Empty, new TestAnalyzerConfigOptionsProvider(queryMode));
         return compilation.WithAnalyzers(analyzers, options).GetAnalyzerDiagnosticsAsync().GetAwaiter().GetResult();
     }

@@ -8,7 +8,7 @@ public sealed class PostgresSelectTests : IClassFixture<PostgresFixture>
 
     public PostgresSelectTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Selects_inserted_email()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
@@ -35,7 +35,7 @@ public sealed class PostgresSelectTests : IClassFixture<PostgresFixture>
         Assert.Equal(["a@b.com"], rows);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task FirstAsync_throws_when_empty()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
@@ -57,7 +57,7 @@ public sealed class PostgresSelectTests : IClassFixture<PostgresFixture>
             db.Select(users.Email).From(users.ToFrom()).FirstAsync(r => r.GetString(0)));
     }
 
-    [Fact]
+    [DockerFact]
     public async Task SingleAsync_throws_when_two_rows()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
@@ -80,7 +80,7 @@ public sealed class PostgresSelectTests : IClassFixture<PostgresFixture>
             db.Select(users.Email).From(users.ToFrom()).SingleAsync(r => r.GetString(0)));
     }
 
-    [Fact]
+    [DockerFact]
     public async Task ToAsyncEnumerable_yields_rows()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();

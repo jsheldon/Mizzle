@@ -7,6 +7,10 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Authors>Jeff Sheldon</Authors>
     <Version>0.1.0-alpha</Version>
+    <!-- Public API ships with IntelliSense; consumers see the same docs the source has. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Undocumented public members are a warning, not a build break. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <RepositoryUrl>https://github.com/jsheldon/Mizzle</RepositoryUrl>
     <RepositoryType>git</RepositoryType>

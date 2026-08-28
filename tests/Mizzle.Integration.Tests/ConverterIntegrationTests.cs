@@ -26,7 +26,7 @@ public sealed class ConverterIntegrationTests : IClassFixture<PostgresFixture>
 
     public ConverterIntegrationTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Converted_columns_round_trip_through_generated_projection()
     {
         var id = Guid.NewGuid();

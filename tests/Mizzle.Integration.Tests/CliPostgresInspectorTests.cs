@@ -8,7 +8,7 @@ public sealed class CliPostgresInspectorTests : IClassFixture<PostgresFixture>
 
     public CliPostgresInspectorTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Postgres_inspector_reads_table_columns_and_key_metadata()
     {
         await using var conn = await _fx.DataSource.OpenConnectionAsync();
@@ -57,7 +57,7 @@ public sealed class CliPostgresInspectorTests : IClassFixture<PostgresFixture>
         Assert.Contains(table.Columns, c => c.Name == "created_at" && c.NativeType == "timestamptz");
     }
 
-    [Fact]
+    [DockerFact]
     public async Task Requested_missing_table_is_reported_clearly()
     {
         var inspector = new PostgresInspector();

@@ -24,7 +24,7 @@ public sealed class TypedProjectionTests : IClassFixture<PostgresFixture>
 
     public TypedProjectionTests(PostgresFixture fx) => _fx = fx;
 
-    [Fact]
+    [DockerFact]
     public async Task Generate_mode_projects_joined_rows_with_left_join_null()
     {
         var taggedAuthor = Guid.NewGuid();
@@ -76,7 +76,7 @@ public sealed class TypedProjectionTests : IClassFixture<PostgresFixture>
         Assert.Null(rows[1].Label);
     }
 
-    [Fact]
+    [DockerFact]
     public async Task FirstOrDefault_projection_returns_null_when_missing()
     {
         await using (var conn = await _fx.DataSource.OpenConnectionAsync())
