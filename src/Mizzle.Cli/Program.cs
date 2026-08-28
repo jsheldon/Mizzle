@@ -26,6 +26,8 @@ app.Configure(config =>
         .WithDescription("Explain SQL features and likely Mizzle support.");
     config.AddCommand<TranslateQueryCommand>("translate-query")
         .WithDescription("Translate a small SQL subset into Mizzle query syntax.");
+    config.AddCommand<VersionCommand>("version")
+        .WithDescription("Show the Mizzle CLI version.");
 });
 
 try

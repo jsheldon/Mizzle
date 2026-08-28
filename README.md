@@ -287,10 +287,14 @@ dotnet tool install --global Mizzle.Cli --prerelease
 ```
 
 ```bash
+mizzle version
+mizzle version --verbose
 mizzle type-map --provider postgres
 mizzle inspect --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --all
 mizzle scaffold --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --tables users,posts --namespace MyApp.Data --output ./Data/Tables
+mizzle doctor
 mizzle doctor --project ./MyApp.csproj
+mizzle doctor --solution ./MyApp.slnx
 mizzle diff --connection "Host=localhost;Database=app;Username=postgres;Password=..." --schema public --source ./Data/Tables
 mizzle explain --provider postgres --sql-file ./query.sql
 mizzle translate-query --provider postgres --sql-file ./query.sql
@@ -299,10 +303,19 @@ mizzle translate-query --provider postgres --sql-file ./query.sql
 Database commands infer `postgres` or `sqlserver` from common connection string
 shapes. Pass `--provider` when the connection string is ambiguous.
 
-`doctor` is intentionally read-only. The project path must be inside the current
-working directory, and inherited project files are read only up to that directory:
+`doctor` is intentionally read-only. If you run it from a directory with one
+solution, it checks the projects in that solution. If there is no solution, it
+uses the single project in the current directory. You can also pass `--project`
+or `--solution` explicitly.
+
+Project and solution paths must be inside the current working directory.
+Inherited project files are read only up to that directory:
 `Directory.Build.props`, `Directory.Build.targets`, and
-`Directory.Packages.props`.
+`Directory.Packages.props`. The command checks dialect references, generator
+references, nullable settings, `MizzleQueryMode`, old constructor alias syntax,
+non-literal column names, lambda column maps, and mismatched Mizzle package
+versions. Test and benchmark projects are shown when they use Mizzle, but their
+app configuration checks are skipped.
 
 The CLI stops on unsupported database types or SQL shapes with `MZCLI###`
 messages. That is intentional: it should point at what Mizzle needs to learn
@@ -310,10 +323,11 @@ next, not generate code that quietly guesses.
 
 Current commands:
 
+- `version`: show the installed Mizzle CLI version. Pass `--verbose` to include build metadata.
 - `type-map`: show the database types Mizzle knows how to scaffold.
 - `inspect`: list tables, columns, database types, nullability, keys, and unsupported mappings.
 - `scaffold`: generate `PgTable<>` or `SqlTable<>` classes from an existing database.
-- `doctor`: check project references, nullable settings, and `MizzleQueryMode`.
+- `doctor`: check a project or solution for common Mizzle setup problems.
 - `diff`: compare live database columns with existing Mizzle table classes.
 - `explain`: summarize SQL features and likely Mizzle support.
 - `translate-query`: translate a small SQL subset into Mizzle query syntax.

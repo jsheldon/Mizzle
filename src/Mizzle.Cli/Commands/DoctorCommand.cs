@@ -12,64 +12,81 @@ internal sealed class DoctorCommand : Command<DoctorCommand.Settings>
     {
         [CommandOption("--project <PROJECT>")]
         [Description("Project file to inspect.")]
-        public string Project { get; init; } = "";
+        public string? Project { get; init; }
+
+        [CommandOption("--solution <SOLUTION>")]
+        [Description("Solution file to inspect.")]
+        public string? Solution { get; init; }
+
+        [CommandOption("--all-projects")]
+        [Description("Show projects that do not appear to use Mizzle.")]
+        public bool AllProjects { get; init; }
     }
 
     protected override int Execute(CommandContext context, Settings settings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(settings.Project) || !File.Exists(settings.Project))
+        var target = DoctorTargetResolver.Resolve(settings.Project, settings.Solution, Environment.CurrentDirectory);
+        var allReports = target.ProjectPaths
+            .Select(path => ProjectDoctorAnalyzer.Analyze(ProjectDoctorReader.Read(path, target.Root)))
+            .ToList();
+        var reports = allReports
+            .Where(report => settings.AllProjects || report.UsesMizzle || report.Issues.Count > 0)
+            .ToList();
+        var skipped = allReports.Count - reports.Count;
+
+        AnsiConsole.MarkupLine($"[bold]Mizzle doctor:[/] {ConsoleText.Escape(target.DisplayName)}");
+        AnsiConsole.MarkupLine(
+            $"[grey]Checked {allReports.Count} {ProjectText(allReports.Count)}; showing {reports.Count}; skipped {skipped} non-Mizzle {ProjectText(skipped)}.[/]");
+        AnsiConsole.WriteLine();
+        if (reports.Count == 0)
         {
-            throw new CliFailure("MZCLI030", "Project file not found.", "Pass --project ./YourApp.csproj.");
+            AnsiConsole.MarkupLine("[grey]No Mizzle projects found.[/]");
+            return 0;
         }
 
-        var info = ProjectDoctorReader.Read(settings.Project);
-        var checks = new Table().RoundedBorder();
-        checks.AddColumn("Check");
-        checks.AddColumn("Result");
-        checks.AddRow("Mizzle package/project reference", ReferenceResult(info, "Mizzle.Postgres", "Mizzle.SqlServer"));
-        checks.AddRow("Generators package/project reference", ReferenceResult(info, "Mizzle.Generators"));
-        checks.AddRow("Strict mode", PropertyResult(info, "MizzleQueryMode", "Strict"));
-        checks.AddRow("Nullable", PropertyResult(info, "Nullable", "enable"));
-        AnsiConsole.Write(checks);
-        return 0;
-    }
-
-    private static string ReferenceResult(ProjectDoctorInfo info, params string[] names)
-    {
-        var package = FindItem(info, "PackageReference", names);
-        var project = FindItem(info, "ProjectReference", names);
-        var analyzer = FindItem(info, "Analyzer", names);
-        var item = package ?? project ?? analyzer;
-        if (item is null)
+        var table = new Table().RoundedBorder();
+        table.AddColumn("Project");
+        table.AddColumn("Dialect");
+        table.AddColumn("Generators");
+        table.AddColumn("Strict");
+        table.AddColumn("Nullable");
+        table.AddColumn("Issues");
+        foreach (var report in reports)
         {
-            return "[yellow]missing[/]";
+            table.AddRow(
+                ConsoleText.Escape(report.ProjectName),
+                Result(report.Dialect),
+                Result(report.Generators),
+                Result(report.StrictMode),
+                Result(report.Nullable),
+                report.Issues.Count == 0 ? "[green]0[/]" : $"[yellow]{report.Issues.Count}[/]");
         }
 
-        var source = Path.GetFileName(item.Source);
-        var kind = analyzer is not null && item == analyzer ? "analyzer" : package is not null && item == package ? "package" : "project";
-        return $"[green]found[/] ({kind}, {source})";
-    }
+        AnsiConsole.Write(table);
 
-    private static ProjectItem? FindItem(ProjectDoctorInfo info, string itemName, params string[] names)
-    {
-        return info.Items.FirstOrDefault(item =>
-            string.Equals(item.Name, itemName, StringComparison.OrdinalIgnoreCase)
-            && 
-            names.Any(name =>
-                string.Equals(item.Identity, name, StringComparison.OrdinalIgnoreCase)
-                || string.Equals(Path.GetFileNameWithoutExtension(item.Identity), name, StringComparison.OrdinalIgnoreCase)
-                || item.Identity.Contains(name, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    private static string PropertyResult(ProjectDoctorInfo info, string property, string expected)
-    {
-        if (!info.Properties.TryGetValue(property, out var propertyValue) || string.IsNullOrWhiteSpace(propertyValue.Value))
+        var issues = reports.SelectMany(r => r.Issues.Select(i => (Report: r, Issue: i))).ToList();
+        if (issues.Count > 0)
         {
-            return "[grey]not enabled[/]";
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[bold]Warnings[/]");
+            foreach (var (report, issue) in issues)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[yellow]{ConsoleText.Escape(issue.Code)}[/] {ConsoleText.Escape(report.ProjectName)}: {ConsoleText.Escape(issue.Message)}");
+            }
         }
 
-        return string.Equals(propertyValue.Value, expected, StringComparison.OrdinalIgnoreCase)
-            ? $"[green]enabled[/] ({propertyValue.Value}, {Path.GetFileName(propertyValue.Source)})"
-            : $"[yellow]{propertyValue.Value}[/] ({Path.GetFileName(propertyValue.Source)})";
+        return issues.Count == 0 ? 0 : 1;
     }
+
+    private static string Result(DoctorCheck check)
+        => check.State switch
+        {
+            DoctorCheckState.Ok => $"[green]{ConsoleText.Escape(check.Text)}[/]",
+            DoctorCheckState.Warn => $"[yellow]{ConsoleText.Escape(check.Text)}[/]",
+            _ => $"[grey]{ConsoleText.Escape(check.Text)}[/]"
+        };
+
+    private static string ProjectText(int count)
+        => count == 1 ? "project" : "projects";
 }

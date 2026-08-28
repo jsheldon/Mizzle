@@ -5,9 +5,10 @@ namespace Mizzle.Cli.Doctor;
 
 internal sealed record ProjectProperty(string Name, string Value, string Source);
 
-internal sealed record ProjectItem(string Name, string Identity, string Source);
+internal sealed record ProjectItem(string Name, string Identity, string Source, string? Version);
 
 internal sealed record ProjectDoctorInfo(
+    string ProjectPath,
     IReadOnlyDictionary<string, ProjectProperty> Properties,
     IReadOnlyList<ProjectItem> Items,
     IReadOnlyList<string> FilesRead);
@@ -49,7 +50,7 @@ internal static class ProjectDoctorReader
             ReadFile(file, properties, items);
         }
 
-        return new ProjectDoctorInfo(properties, items, files);
+        return new ProjectDoctorInfo(fullProject, properties, items, files);
     }
 
     private static IReadOnlyList<string> DiscoverFiles(string project, string root)
@@ -119,7 +120,7 @@ internal static class ProjectDoctorReader
             }
         }
 
-        foreach (var element in document.Descendants().Where(e => e.Name.LocalName is "PackageReference" or "ProjectReference" or "Analyzer"))
+        foreach (var element in document.Descendants().Where(e => e.Name.LocalName is "PackageReference" or "PackageVersion" or "ProjectReference" or "Analyzer"))
         {
             var identity = element.Attribute("Include")?.Value
                 ?? element.Attribute("Update")?.Value
@@ -127,7 +128,8 @@ internal static class ProjectDoctorReader
                 ?? "";
             if (identity.Length > 0)
             {
-                items.Add(new ProjectItem(element.Name.LocalName, identity, file));
+                var version = element.Attribute("Version")?.Value;
+                items.Add(new ProjectItem(element.Name.LocalName, identity, file, version));
             }
         }
     }
