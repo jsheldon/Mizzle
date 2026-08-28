@@ -3,59 +3,37 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Mizzle.Generators;
 
+// Single source of truth for the generator and the Strict analyzer: Strict polices
+// exactly the terminators the projection generator can bake, and nothing else.
+// Judging a shape it cannot bake -- ExecuteAsync, streaming -- would report a
+// failure the caller has no way to fix.
 internal static class QueryInterceptability
 {
-    public static bool IsQueryTerminator(IMethodSymbol method)
+    private static readonly HashSet<string> BakeableTerminators = new(StringComparer.Ordinal)
     {
-        if (method.Name is not (
-            "ToListAsync" or
-            "FirstAsync" or
-            "SingleAsync" or
-            "ToAsyncEnumerable" or
-            "ToPageAsync" or
-            "ToCursorPageAsync" or
-            "ExecuteAsync"))
-        {
-            return false;
-        }
+        "ToListAsync",
+        "FirstAsync",
+        "FirstOrDefaultAsync",
+        "SingleAsync",
+        "SingleOrDefaultAsync",
+        "ToPageAsync",
+        "ToCursorPageAsync",
+    };
 
-        var typeName = method.ContainingType.ToDisplayString();
-        return typeName is "Mizzle.Fluent.SelectBuilder"
-            or "Mizzle.Fluent.InsertBuilder"
-            or "Mizzle.Fluent.UpdateBuilder"
-            or "Mizzle.Fluent.DeleteBuilder"
-            || Implements(method.ContainingType, "Mizzle", "IQueryExecutor");
-    }
+    public static bool IsQueryTerminator(IMethodSymbol method)
+        => BakeableTerminators.Contains(method.Name)
+            && method.ContainingType.ToDisplayString() == "Mizzle.Fluent.SelectBuilder";
 
-    // Single source of truth for generator and analyzer: a terminator is
-    // interceptable exactly when the generator can bake SQL for it.
+    // A terminator is interceptable exactly when the generator can bake SQL for it.
     public static bool IsInterceptableFluentChain(InvocationExpressionSyntax terminator, SemanticModel model)
     {
-        if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol { Name: "ToListAsync" } method
-            || method.ContainingType.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
+        if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol method
+            || !IsQueryTerminator(method))
         {
             return false;
         }
 
         var spec = BakedChainWalker.TryGetSpec(terminator, model);
         return spec is not null && BakedSqlEmitter.Emit(spec) is not null;
-    }
-
-    private static bool Implements(ITypeSymbol type, string ns, string name)
-    {
-        if (type.Name == name && type.ContainingNamespace.ToDisplayString() == ns)
-        {
-            return true;
-        }
-
-        foreach (var iface in type.AllInterfaces)
-        {
-            if (iface.Name == name && iface.ContainingNamespace.ToDisplayString() == ns)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
