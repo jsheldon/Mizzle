@@ -61,6 +61,10 @@ public sealed class SelectBuilder
     public SelectBuilder Select(params ColumnRef[] columns)
         => Copy(select: [..columns.Select(c => new SelectItem(c, null))]);
 
+    /// <summary>
+    ///     The columns to project. Use <c>As(...)</c> on a column when the schema name
+    ///     and the target member name differ.
+    /// </summary>
     public SelectBuilder Select(params IColumn[] columns)
         => Copy(select: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))]);
 
@@ -110,8 +114,15 @@ public sealed class SelectBuilder
 
     public SelectBuilder Distinct() => Copy(distinct: true);
 
+    /// <summary>
+    ///     Prefixes the query with a common table expression. A CTE whose body is a
+    ///     statically visible chain is baked along with the outer query.
+    /// </summary>
     public SelectBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
 
+    /// <summary>
+    ///     Prefixes the query with a <c>WITH RECURSIVE</c> common table expression.
+    /// </summary>
     public SelectBuilder WithRecursive(CteClause cte)
         => Copy(with: [.._with, cte], recursiveWith: true);
 
@@ -236,18 +247,26 @@ public sealed class SelectBuilder
     // Delegate-free typed terminators. These runtime bodies are placeholders:
     // the source generator intercepts statically-visible call sites and routes
     // them through the precompiled path with a generated projection mapper.
+    /// <summary>Runs the query and maps every row to <typeparamref name="T"/>.</summary>
     public Task<IReadOnlyList<T>> ToListAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 
+    /// <summary>Runs the query and returns the first row as <typeparamref name="T"/>.</summary>
+    /// <exception cref="InvalidOperationException">No rows were returned.</exception>
     public Task<T> FirstAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 
+    /// <summary>Runs the query and returns the first row, or <c>default</c> if there are none.</summary>
     public Task<T?> FirstOrDefaultAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 
+    /// <summary>Runs the query and returns the only row.</summary>
+    /// <exception cref="InvalidOperationException">Zero or more than one row was returned.</exception>
     public Task<T> SingleAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 
+    /// <summary>Runs the query and returns the only row, or <c>default</c> if there are none.</summary>
+    /// <exception cref="InvalidOperationException">More than one row was returned.</exception>
     public Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
         => throw NotStaticallyVisible();
 

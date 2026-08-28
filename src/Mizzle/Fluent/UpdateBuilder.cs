@@ -55,16 +55,26 @@ public sealed class UpdateBuilder
     public UpdateBuilder Where(IColumn column, object? value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
+    /// <summary>
+    ///     The columns to return from the affected rows, read back through the typed
+    ///     terminators. <c>As(...)</c> works here as it does in a select list.
+    /// </summary>
     public UpdateBuilder Returning(params IColumn[] columns)
         => Copy(
             returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
             returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
 
+    /// <summary>Prefixes the statement with a common table expression.</summary>
     public UpdateBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
 
+    /// <summary>Prefixes the statement with a <c>WITH RECURSIVE</c> common table expression.</summary>
     public UpdateBuilder WithRecursive(CteClause cte)
         => Copy(with: [.._with, cte], recursiveWith: true);
 
+    /// <summary>
+    ///     The row count this statement must affect. Anything else throws
+    ///     <see cref="ConcurrencyException"/> rather than silently succeeding.
+    /// </summary>
     public UpdateBuilder Expect(int affectedRows) => Copy(expect: affectedRows);
 
     public UpdateBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
@@ -98,12 +108,15 @@ public sealed class UpdateBuilder
     }
 
 
+    /// <summary>Runs the query and maps every row to <typeparamref name="T"/>.</summary>
     public Task<IReadOnlyList<T>> ToListAsync<T>(CancellationToken cancellationToken = default)
     {
         EnsureReturningProjection();
         return ToListAsync(reader => RuntimeProjectionMapper.Read<T>(_returningColumns, reader), cancellationToken);
     }
 
+    /// <summary>Runs the query and returns the first row.</summary>
+    /// <exception cref="InvalidOperationException">No rows were returned.</exception>
     public async Task<T> FirstAsync<T>(CancellationToken cancellationToken = default)
     {
         var rows = await ToListAsync<T>(cancellationToken);
@@ -115,12 +128,15 @@ public sealed class UpdateBuilder
         return rows[0];
     }
 
+    /// <summary>Runs the query and returns the first row, or <c>default</c> if there are none.</summary>
     public async Task<T?> FirstOrDefaultAsync<T>(CancellationToken cancellationToken = default)
     {
         var rows = await ToListAsync<T>(cancellationToken);
         return rows.Count == 0 ? default : rows[0];
     }
 
+    /// <summary>Runs the query and returns the only row.</summary>
+    /// <exception cref="InvalidOperationException">Zero or more than one row was returned.</exception>
     public async Task<T> SingleAsync<T>(CancellationToken cancellationToken = default)
     {
         var rows = await ToListAsync<T>(cancellationToken);
@@ -132,6 +148,8 @@ public sealed class UpdateBuilder
         };
     }
 
+    /// <summary>Runs the query and returns the only row, or <c>default</c> if there are none.</summary>
+    /// <exception cref="InvalidOperationException">More than one row was returned.</exception>
     public async Task<T?> SingleOrDefaultAsync<T>(CancellationToken cancellationToken = default)
     {
         var rows = await ToListAsync<T>(cancellationToken);

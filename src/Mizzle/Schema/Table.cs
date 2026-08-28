@@ -3,6 +3,11 @@ using Mizzle.Ir;
 
 namespace Mizzle.Schema;
 
+/// <summary>
+///     Base class for a table definition. Derive with the table type as
+///     <typeparamref name="TSelf"/> and declare columns as get-only properties.
+/// </summary>
+/// <typeparam name="TSelf">The deriving table type.</typeparam>
 public abstract class Table<TSelf> : ITable
     where TSelf : Table<TSelf>
 {
@@ -15,9 +20,15 @@ public abstract class Table<TSelf> : ITable
         Constraints = [..DefineConstraints()];
     }
 
+    /// <summary>The table's name in the database.</summary>
     public string Name { get; }
+    /// <summary>The schema the table lives in, or null for the connection's default.</summary>
     public string? Schema { get; }
     public abstract DialectKind Dialect { get; }
+    /// <summary>
+    ///     The alias this instance uses in emitted SQL. Defaults to <see cref="Name"/>;
+    ///     change it with <see cref="WithAlias"/>.
+    /// </summary>
     public string Alias { get; private set; }
 
     public IReadOnlyList<IColumn> Columns { get; private set; } = [];
@@ -26,10 +37,20 @@ public abstract class Table<TSelf> : ITable
 
     public FromSource ToFrom() => new(Name, Schema, Alias);
 
-    // A second instance of the same table under a different alias, so one query
-    // can join it more than once (lookup tables, self-joins). Returns a new
-    // instance. The original keeps its default alias and stays shareable.
-    // Requires TSelf to have a parameterless constructor.
+    /// <summary>
+    ///     A second instance of this table under a different alias, so one query can
+    ///     join it more than once -- a lookup table joined for several coded fields,
+    ///     or a self-join.
+    /// </summary>
+    /// <param name="alias">The alias to use in SQL, e.g. <c>"lang"</c>.</param>
+    /// <returns>A new instance. The original keeps its alias and stays shareable.</returns>
+    /// <exception cref="InvalidOperationException">
+    ///     <typeparamref name="TSelf"/> has no parameterless constructor. The analyzer
+    ///     reports this as <c>MIZ012</c> at the call site.
+    /// </exception>
+    /// <remarks>
+    ///     Two tables sharing an alias in one query is <c>MIZ011</c>.
+    /// </remarks>
     public TSelf WithAlias(string alias)
     {
         if (string.IsNullOrWhiteSpace(alias))
