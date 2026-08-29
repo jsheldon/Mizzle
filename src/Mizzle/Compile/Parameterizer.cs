@@ -89,6 +89,17 @@ public static class Parameterizer
             CoalesceExpr coalesce => coalesce with { Args = [..coalesce.Args.Select(Rewrite)] },
             AggregateExpr agg => agg with { Arg = agg.Arg is null ? null : Rewrite(agg.Arg) },
             CallExpr call => call with { Args = [..call.Args.Select(Rewrite)] },
+            ConvertExpr convert => convert with { Value = Rewrite(convert.Value) },
+            // Arm order is the emitted order, so the slots line up with the text.
+            CaseExpr @case => @case with
+            {
+                Whens = [..@case.Whens.Select(w => w with
+                {
+                    Condition = Rewrite(w.Condition),
+                    Result = Rewrite(w.Result)
+                })],
+                Fallback = @case.Fallback is null ? null : Rewrite(@case.Fallback)
+            },
             _ => expr
         };
 

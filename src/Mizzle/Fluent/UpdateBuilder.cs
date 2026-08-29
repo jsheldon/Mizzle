@@ -205,6 +205,9 @@ public sealed class UpdateBuilder
             CoalesceExpr coalesce => coalesce.Args.Any(arg => ContainsColumn(arg, column)),
             AggregateExpr { Arg: not null } agg => ContainsColumn(agg.Arg, column),
             CallExpr call => call.Args.Any(arg => ContainsColumn(arg, column)),
+            ConvertExpr convert => ContainsColumn(convert.Value, column),
+            CaseExpr @case => @case.Whens.Any(w => ContainsColumn(w.Condition, column) || ContainsColumn(w.Result, column))
+                              || (@case.Fallback is not null && ContainsColumn(@case.Fallback, column)),
             _ => false
         };
     }

@@ -93,6 +93,17 @@ public sealed class PgColumn<T> : Column<T>
     }
 
     /// <summary>
+    ///     Requires this column in <c>WHERE</c> on every query against the table.
+    ///     A select, update, or delete that omits it is <c>MIZ013</c>. Use it for
+    ///     tenant keys so a missing filter cannot compile cleanly.
+    /// </summary>
+    public PgColumn<T> AlwaysFilter()
+    {
+        MarkAlwaysFilter();
+        return this;
+    }
+
+    /// <summary>
     ///     Binds this column to a projection member with a different name, and emits a
     ///     SQL alias to match. Use it when the schema and the domain type disagree.
     /// </summary>

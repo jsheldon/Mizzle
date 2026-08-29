@@ -36,7 +36,7 @@ internal enum MapStatus
 
 internal sealed class TableColumnFact
 {
-    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, bool isUntrimmed = false)
+    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, bool isUntrimmed = false, bool isAlwaysFilter = false)
     {
         PropertyName = propertyName;
         DbName = dbName;
@@ -45,6 +45,7 @@ internal sealed class TableColumnFact
         ReaderCall = readerCall;
         ReadConverter = readConverter;
         IsUntrimmed = isUntrimmed;
+        IsAlwaysFilter = isAlwaysFilter;
     }
 
     // Fully-qualified static method wrapped around the storage read, from .Map(read, write).
@@ -63,6 +64,10 @@ internal sealed class TableColumnFact
 
     // Untrimmed() modifier: excludes this column from MizzleTrimStrings.
     public bool IsUntrimmed { get; }
+
+    // AlwaysFilter() modifier: queries against this table must constrain the
+    // column in WHERE, or the analyzer reports MIZ013.
+    public bool IsAlwaysFilter { get; }
 }
 
 internal static class TableFacts
@@ -108,6 +113,7 @@ internal static class TableFacts
                 || modifiers.Contains("NotNull")
                 || modifiers.Contains("PrimaryKey");
             var isUntrimmed = modifiers.Contains("Untrimmed");
+            var isAlwaysFilter = modifiers.Contains("AlwaysFilter");
             var mapStatus = GetMapInfo(member, compilation, out var converterFq, out var storageReader, out _);
             if (mapStatus is MapStatus.Invalid or MapStatus.NullableResult)
             {
@@ -115,8 +121,8 @@ internal static class TableFacts
             }
 
             columns.Add(mapStatus == MapStatus.Valid
-                ? new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, storageReader!, converterFq, isUntrimmed)
-                : new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr), null, isUntrimmed));
+                ? new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, storageReader!, converterFq, isUntrimmed, isAlwaysFilter)
+                : new TableColumnFact(member.Name, dbName, ToCSharpType(clr), isRequired, ReaderCall(clr), null, isUntrimmed, isAlwaysFilter));
         }
 
         if (columns.Count == 0)

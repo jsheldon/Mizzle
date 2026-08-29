@@ -33,6 +33,8 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
 
     public bool IsUntrimmed { get; private set; }
 
+    public bool IsAlwaysFilter { get; private set; }
+
     internal Type? StorageClrType { get; private set; }
 
     internal Func<object?, object?>? ReadConverter { get; private set; }
@@ -56,6 +58,7 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
         ReferencedColumn = source.ReferencedColumn;
         Length = source.Length;
         IsUntrimmed = source.IsUntrimmed;
+        IsAlwaysFilter = source.IsAlwaysFilter;
     }
 
     // Full clone for same-T modifiers (As, Untrimmed). Unlike CopyMetadataFrom,
@@ -86,6 +89,8 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
     internal void SetProjectionName(string name) => ProjectionName = name;
 
     protected void MarkUntrimmed() => IsUntrimmed = true;
+
+    protected void MarkAlwaysFilter() => IsAlwaysFilter = true;
 
     public ValueExpr Bind(object? value)
     {
@@ -131,25 +136,37 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
 
     public BinaryExpr Eq(Column<T> other) => Binary(BinaryOp.Eq, other);
 
+    public BinaryExpr Eq(Expr other) => new(BinaryOp.Eq, ToRef(), other);
+
     public BinaryExpr Ne(T value) => Binary(BinaryOp.Ne, value);
 
     public BinaryExpr Ne(Column<T> other) => Binary(BinaryOp.Ne, other);
+
+    public BinaryExpr Ne(Expr other) => new(BinaryOp.Ne, ToRef(), other);
 
     public BinaryExpr Gt(T value) => Binary(BinaryOp.Gt, value);
 
     public BinaryExpr Gt(Column<T> other) => Binary(BinaryOp.Gt, other);
 
+    public BinaryExpr Gt(Expr other) => new(BinaryOp.Gt, ToRef(), other);
+
     public BinaryExpr Gte(T value) => Binary(BinaryOp.Gte, value);
 
     public BinaryExpr Gte(Column<T> other) => Binary(BinaryOp.Gte, other);
+
+    public BinaryExpr Gte(Expr other) => new(BinaryOp.Gte, ToRef(), other);
 
     public BinaryExpr Lt(T value) => Binary(BinaryOp.Lt, value);
 
     public BinaryExpr Lt(Column<T> other) => Binary(BinaryOp.Lt, other);
 
+    public BinaryExpr Lt(Expr other) => new(BinaryOp.Lt, ToRef(), other);
+
     public BinaryExpr Lte(T value) => Binary(BinaryOp.Lte, value);
 
     public BinaryExpr Lte(Column<T> other) => Binary(BinaryOp.Lte, other);
+
+    public BinaryExpr Lte(Expr other) => new(BinaryOp.Lte, ToRef(), other);
 
     public UnaryExpr IsNull() => new(UnaryOp.IsNull, ToRef());
 

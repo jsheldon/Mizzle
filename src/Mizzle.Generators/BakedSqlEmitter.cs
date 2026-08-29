@@ -65,7 +65,7 @@ internal sealed class BakedTable
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
-    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null, string op = "=", bool isUnary = false)
+    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null, string op = "=", bool isUnary = false, string? rightExpression = null)
     {
         LeftExpression = leftExpression;
         ConditionalIndex = conditionalIndex;
@@ -75,10 +75,15 @@ internal sealed class BakedCondition
         LeftDbName = leftDbName;
         RightAlias = rightAlias;
         RightDbName = rightDbName;
+        RightExpression = rightExpression;
     }
 
     // Set when the left side is an aggregate rather than a column, as in HAVING.
     public string? LeftExpression { get; }
+
+    // Set when the right side is a baked expression (TSql.Convert) rather than
+    // a column or a bind placeholder.
+    public string? RightExpression { get; }
 
     // Set for a WhereIf predicate: the bit in the shape mask that decides whether
     // this condition is part of a given variant. Null means always applied.
@@ -95,7 +100,7 @@ internal sealed class BakedCondition
     public string? RightAlias { get; }
     public string? RightDbName { get; }
 
-    public bool IsBind => RightAlias is null;
+    public bool IsBind => RightAlias is null && RightExpression is null;
 }
 
 internal sealed class BakedJoin
@@ -349,12 +354,41 @@ internal static class BakedSqlEmitter
         return placeholder;
     }
 
+    // A rendered expression -- an IN list, a CASE -- carries one marker per value
+    // it binds, in the order Parameterizer captures them. The walker cannot know
+    // the slot numbers (they depend on everything emitted before it), so it leaves
+    // markers and they are numbered here.
+    internal const char BindMarker = '';
+
+    private static string Substitute(BakedQuerySpec spec, string sql, ref int slot)
+    {
+        if (sql.IndexOf(BindMarker) < 0)
+        {
+            return sql;
+        }
+
+        var result = new StringBuilder(sql.Length);
+        foreach (var character in sql)
+        {
+            result.Append(character == BindMarker ? Placeholder(spec, ref slot) : character.ToString());
+        }
+
+        return result.ToString();
+    }
+
     private static string Condition(BakedQuerySpec spec, BakedCondition condition, ref int slot)
     {
-        var left = condition.LeftExpression ?? Column(spec, condition.LeftAlias, condition.LeftDbName);
+        var left = condition.LeftExpression is { } leftExpression
+            ? Substitute(spec, leftExpression, ref slot)
+            : Column(spec, condition.LeftAlias, condition.LeftDbName);
         if (condition.IsUnary)
         {
             return $"{left} {condition.Op}";
+        }
+
+        if (condition.RightExpression is not null)
+        {
+            return $"{left} {condition.Op} {Substitute(spec, condition.RightExpression, ref slot)}";
         }
 
         if (!condition.IsBind)
@@ -377,7 +411,9 @@ internal static class BakedSqlEmitter
     {
         var expr = column.IsLiteral
             ? Placeholder(spec, ref slot)
-            : column.SqlExpression ?? Column(spec, column.TableAlias, column.DbName);
+            : column.SqlExpression is { } sqlExpression
+                ? Substitute(spec, sqlExpression, ref slot)
+                : Column(spec, column.TableAlias, column.DbName);
         return column.ProjectionName is null ? expr : $"{expr} AS {Quote(spec, column.ProjectionName)}";
     }
 
@@ -388,4 +424,23 @@ internal static class BakedSqlEmitter
         => spec.IsPostgres
             ? $"\"{identifier.Replace("\"", "\"\"")}\""
             : $"[{identifier.Replace("]", "]]")}]";
+}
+
+// Tables in a query plus the WHERE columns that actually constrain them.
+// Nested holds UNION ALL branches, each checked independently.
+internal sealed class AlwaysFilterQuery
+{
+    public AlwaysFilterQuery(
+        IReadOnlyList<BakedTable> tables,
+        IReadOnlyList<BakedCondition> where,
+        IReadOnlyList<AlwaysFilterQuery>? nested = null)
+    {
+        Tables = tables;
+        Where = where;
+        Nested = nested ?? Array.Empty<AlwaysFilterQuery>();
+    }
+
+    public IReadOnlyList<BakedTable> Tables { get; }
+    public IReadOnlyList<BakedCondition> Where { get; }
+    public IReadOnlyList<AlwaysFilterQuery> Nested { get; }
 }

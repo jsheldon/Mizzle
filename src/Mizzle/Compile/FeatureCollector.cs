@@ -207,6 +207,22 @@ public static class FeatureCollector
                 }
 
                 break;
+            case ConvertExpr convert:
+                CollectExpr(convert.Value, features);
+                break;
+            case CaseExpr @case:
+                foreach (var when in @case.Whens)
+                {
+                    CollectExpr(when.Condition, features);
+                    CollectExpr(when.Result, features);
+                }
+
+                if (@case.Fallback is not null)
+                {
+                    CollectExpr(@case.Fallback, features);
+                }
+
+                break;
         }
     }
 }

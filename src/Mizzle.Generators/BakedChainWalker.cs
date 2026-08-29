@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -35,6 +36,150 @@ internal static class BakedChainWalker
         }
 
         return WalkChain(terminatorMember.Expression, model, out hasReportedColumnError);
+    }
+
+    private static readonly HashSet<string> WriteTerminators = new(StringComparer.Ordinal)
+    {
+        "ExecuteAsync",
+        "ToListAsync",
+        "FirstAsync",
+        "FirstOrDefaultAsync",
+        "SingleAsync",
+        "SingleOrDefaultAsync",
+    };
+
+    // SELECT/UPDATE/DELETE terminator whose shape is statically visible enough
+    // to know which tables are in play and which columns WHERE names. Null when
+    // the chain is not a terminator, or cannot be proven -- callers stay silent.
+    public static AlwaysFilterQuery? TryGetAlwaysFilterQuery(
+        InvocationExpressionSyntax terminator,
+        SemanticModel model)
+    {
+        if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol method)
+        {
+            return null;
+        }
+
+        var containing = method.ContainingType.ToDisplayString();
+        if (containing == "Mizzle.Fluent.SelectBuilder")
+        {
+            if (!QueryInterceptability.IsQueryTerminator(method))
+            {
+                return null;
+            }
+
+            var spec = TryGetSpec(terminator, model);
+            return spec is null ? null : FromSelectSpec(spec);
+        }
+
+        if (containing is not ("Mizzle.Fluent.UpdateBuilder" or "Mizzle.Fluent.DeleteBuilder")
+            || !WriteTerminators.Contains(method.Name)
+            || terminator.Expression is not MemberAccessExpressionSyntax writeMember)
+        {
+            return null;
+        }
+
+        return WalkWriteChain(writeMember.Expression, model, containing == "Mizzle.Fluent.UpdateBuilder");
+    }
+
+    private static AlwaysFilterQuery FromSelectSpec(BakedQuerySpec spec)
+    {
+        var tables = new List<BakedTable> { spec.From };
+        foreach (var join in spec.Joins)
+        {
+            tables.Add(join.Table);
+        }
+
+        // A union branch and a CTE body are each their own scope: the outer
+        // WHERE does not constrain them, so they are checked as nested queries
+        // carrying only their own predicates.
+        var where = spec.Where.Where(c => c.ConditionalIndex is null).ToList();
+        var nested = spec.UnionAll
+            .Concat(spec.With.Select(cte => cte.Body))
+            .Select(FromSelectSpec)
+            .ToList();
+        return new AlwaysFilterQuery(tables, where, nested);
+    }
+
+    private static AlwaysFilterQuery? WalkWriteChain(ExpressionSyntax chain, SemanticModel model, bool isUpdate)
+    {
+        var calls = new List<(string Name, InvocationExpressionSyntax Invocation)>();
+        var current = chain;
+        while (current is InvocationExpressionSyntax invocation)
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            {
+                return null;
+            }
+
+            calls.Add((member.Name.Identifier.Text, invocation));
+            current = member.Expression;
+        }
+
+        var receiverType = model.GetTypeInfo(current).Type?.ToDisplayString();
+        if (receiverType is not ("Mizzle.Postgres.PostgresDb" or "Mizzle.SqlServer.SqlDb"))
+        {
+            return null;
+        }
+
+        calls.Reverse();
+        var state = new WalkState(model);
+        var nested = new List<AlwaysFilterQuery>();
+        BakedTable? table = null;
+        foreach (var (name, invocation) in calls)
+        {
+            var args = invocation.ArgumentList.Arguments;
+            switch (name)
+            {
+                case "Update" when isUpdate && table is null && args.Count == 1:
+                case "DeleteFrom" when !isUpdate && table is null && args.Count == 1:
+                    table = state.ResolveTable(Unwrap(args[0].Expression));
+                    if (table is null)
+                    {
+                        return null;
+                    }
+
+                    break;
+                case "Where" when args.Count == 2
+                    && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
+                    && whereMethod.Parameters[0].Type.Name == "IColumn":
+                    if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
+                    {
+                        return null;
+                    }
+
+                    state.Where.Add(new BakedCondition(whereColumn.TableAlias, whereColumn.DbName, null, null));
+                    break;
+                case "Where" when args.Count >= 1:
+                    foreach (var arg in args)
+                    {
+                        if (state.ResolveCondition(arg.Expression) is not { } condition)
+                        {
+                            return null;
+                        }
+
+                        state.Where.Add(condition);
+                    }
+
+                    break;
+                case "With" or "WithRecursive" when args.Count == 1:
+                    // A CTE body that will not resolve is skipped rather than
+                    // abandoning the whole chain: the target table is still
+                    // worth checking.
+                    if (state.ResolveCte(args[0].Expression) is { } writeCte)
+                    {
+                        nested.Add(FromSelectSpec(writeCte.Body));
+                    }
+
+                    break;
+                case "Set" or "Returning" or "Expect" or "Timeout":
+                    break;
+                default:
+                    return null;
+            }
+        }
+
+        return table is null ? null : new AlwaysFilterQuery([table], state.Where, nested);
     }
 
     // Walks a builder-valued chain that has no terminator of its own -- a union
@@ -237,7 +382,10 @@ internal static class BakedChainWalker
                         conditional.LeftAlias, conditional.LeftDbName,
                         conditional.RightAlias, conditional.RightDbName,
                         conditional.LeftExpression,
-                        state.ConditionalCount));
+                        state.ConditionalCount,
+                        conditional.Op,
+                        conditional.IsUnary,
+                        conditional.RightExpression));
                     state.ConditionalCount++;
                     break;
                 case "Having" when args.Count == 1:
@@ -591,6 +739,21 @@ internal static class BakedChainWalker
                 expression = asArgs[0].Expression;
             }
 
+            if ((ResolveConvertSql(expression)
+                 ?? ResolveTSqlCallSql(expression)
+                 ?? ResolveCaseSql(expression)) is { } convertSql)
+            {
+                if (requireAlias && alias is null)
+                {
+                    return null;
+                }
+
+                return new BakedColumn(
+                    "", "", alias ?? "", "object", isRequired: false, "GetFieldValue<object>",
+                    projectionName: alias,
+                    sqlExpression: convertSql);
+            }
+
             if (expression is not InvocationExpressionSyntax
                 {
                     Expression: MemberAccessExpressionSyntax aggregateMember,
@@ -772,7 +935,155 @@ internal static class BakedChainWalker
                 : new BakedColumn(instanceAlias ?? facts.Alias, fact.DbName, fact.PropertyName, fact.ClrTypeName, fact.IsRequired, fact.ReaderCall, fact.ReadConverter, projectionName, fact.IsUntrimmed);
         }
 
-        // X.Eq(Y): column vs column, or column vs runtime bind.
+        // TSql.Convert(SqlType.VarChar(20), TSql.Convert(SqlType.Int, col)) ->
+        // CONVERT(varchar(20), CONVERT(int, [alias].[col])). Null when the type
+        // is not a literal SqlType or the value is not a column / nested convert.
+        public string? ResolveConvertSql(ExpressionSyntax expression)
+        {
+            if (UnwrapExprLocal(expression) is not InvocationExpressionSyntax invocation
+                || _model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
+                {
+                    Name: "Convert",
+                    ContainingType.Name: "TSql",
+                    ContainingType.ContainingNamespace: { } ns
+                }
+                || ns.ToDisplayString() != "Mizzle.SqlServer"
+                || invocation.ArgumentList.Arguments.Count is not (2 or 3))
+            {
+                return null;
+            }
+
+            var arguments = invocation.ArgumentList.Arguments;
+            var sqlType = ResolveSqlType(arguments[0].Expression);
+            if (sqlType is null)
+            {
+                return null;
+            }
+
+            // The style code is emitted verbatim, so it has to be a literal here
+            // for the baked text to match what the runtime emitter produces.
+            string style;
+            if (arguments.Count == 3)
+            {
+                if (!TryIntLiteral(arguments[2].Expression, out var styleCode))
+                {
+                    return null;
+                }
+
+                style = ", " + styleCode;
+            }
+            else
+            {
+                style = "";
+            }
+
+            var inner = ResolveScalarSql(arguments[1].Expression);
+            return inner is null ? null : "CONVERT(" + sqlType + ", " + inner + style + ")";
+        }
+
+        // TSql.GetDate() -> getdate(); TSql.RTrim(col) -> rtrim([t].[c]). Null for
+        // any TSql member the baker cannot render, which keeps the query on the
+        // runtime path instead of guessing at its SQL.
+        public string? ResolveTSqlCallSql(ExpressionSyntax expression)
+        {
+            if (UnwrapExprLocal(expression) is not InvocationExpressionSyntax invocation
+                || _model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
+                {
+                    ContainingType.Name: "TSql",
+                    ContainingType.ContainingNamespace: { } ns
+                } method
+                || ns.ToDisplayString() != "Mizzle.SqlServer")
+            {
+                return null;
+            }
+
+            var arguments = invocation.ArgumentList.Arguments;
+            if (TSqlFunctionNames.For(method.Name, arguments.Count) is not { } function)
+            {
+                return null;
+            }
+
+            if (arguments.Count == 0)
+            {
+                return function + "()";
+            }
+
+            var inner = ResolveScalarSql(arguments[0].Expression);
+            return inner is null ? null : function + "(" + inner + ")";
+        }
+
+        // A scalar position: a column, a CONVERT, or a TSql function over one.
+        private string? ResolveScalarSql(ExpressionSyntax expression)
+            => ResolveColumn(expression) is { } column
+                ? Quote(column.TableAlias) + "." + Quote(column.DbName)
+                : ResolveConvertSql(expression) ?? ResolveTSqlCallSql(expression);
+
+        // An Expr held in a local or field -- var key = TSql.Convert(...) -- so a
+        // join key used in two places can be written once. Reassignment disqualifies
+        // it: the initializer would no longer be what the runtime emits.
+        private ExpressionSyntax UnwrapExprLocal(ExpressionSyntax expression)
+        {
+            if (expression is not (IdentifierNameSyntax or MemberAccessExpressionSyntax))
+            {
+                return expression;
+            }
+
+            var type = _model.GetTypeInfo(expression).Type;
+            if (type is null || !IsRenderedOperand(type))
+            {
+                return expression;
+            }
+
+            var symbol = _model.GetSymbolInfo(expression).Symbol;
+            if (symbol is not (ILocalSymbol or IFieldSymbol))
+            {
+                return expression;
+            }
+
+            var declaration = symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+            var initializer = declaration switch
+            {
+                VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+                PropertyDeclarationSyntax property => property.Initializer?.Value,
+                _ => null
+            };
+
+            return initializer is InvocationExpressionSyntax invocation
+                   && !IsReassigned(symbol, declaration!, _model)
+                ? invocation
+                : expression;
+        }
+
+        private string? ResolveSqlType(ExpressionSyntax expression)
+        {
+            if (_model.GetSymbolInfo(expression).Symbol is IPropertySymbol
+                {
+                    ContainingType.Name: "SqlType",
+                    ContainingType.ContainingNamespace: { } propNs
+                } property
+                && propNs.ToDisplayString() == "Mizzle.SqlServer")
+            {
+                return SqlTypeNames.For(property.Name, null);
+            }
+
+            if (expression is InvocationExpressionSyntax invocation
+                && _model.GetSymbolInfo(invocation).Symbol is IMethodSymbol
+                {
+                    ContainingType.Name: "SqlType",
+                    ContainingType.ContainingNamespace: { } methodNs
+                } method
+                && methodNs.ToDisplayString() == "Mizzle.SqlServer"
+                && invocation.ArgumentList.Arguments.Count == 1
+                && invocation.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax literal
+                && literal.Token.Value is int length)
+            {
+                return SqlTypeNames.For(method.Name, length);
+            }
+
+            return null;
+        }
+
+        // X.Eq(Y): column vs column, column vs TSql.Convert, or column vs runtime bind.
         public BakedCondition? ResolveCondition(ExpressionSyntax expression)
         {
             if (expression is not InvocationExpressionSyntax
@@ -809,6 +1120,11 @@ internal static class BakedChainWalker
                 "Like" => "LIKE",
                 _ => null
             };
+            if (member.Name.Identifier.Text == "In")
+            {
+                return ResolveIn(member, conditionArgs);
+            }
+
             if (op is null || conditionArgs.Count != 1)
             {
                 return null;
@@ -819,11 +1135,215 @@ internal static class BakedChainWalker
                 return null;
             }
 
-            var right = ResolveColumn(conditionArgs[0].Expression);
-            return right is null
-                ? new BakedCondition(left.TableAlias, left.DbName, null, null, op: op)
-                : new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName, op: op);
+            if (ResolveColumn(conditionArgs[0].Expression) is { } right)
+            {
+                return new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName, op: op);
+            }
+
+            if (ResolveConvertSql(conditionArgs[0].Expression) is { } convertSql)
+            {
+                return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op, rightExpression: convertSql);
+            }
+
+            if (ResolveTSqlCallSql(conditionArgs[0].Expression) is { } callSql)
+            {
+                return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op, rightExpression: callSql);
+            }
+
+            // Only a value right side -- Eq(T), Like(string) -- binds a parameter.
+            // A Column<T> or Expr right side is rendered into the SQL, so one that
+            // reaches here is one nothing above could render, and the query has to
+            // leave the baked path: emitting "> @p0" for "> len([c])" would run
+            // different SQL than the runtime and never supply the bind.
+            if (IsRenderedOperand(_model.GetTypeInfo(conditionArgs[0].Expression).Type))
+            {
+                return null;
+            }
+
+            return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op);
         }
+
+        // Expr and Column<T> operands become SQL text; everything else becomes a bind.
+        private static bool IsRenderedOperand(ITypeSymbol? type)
+        {
+            for (var current = type; current is not null; current = current.BaseType)
+            {
+                var containing = current.ContainingNamespace?.ToDisplayString();
+                if (current.Name == "Expr" && containing == "Mizzle.Ir")
+                {
+                    return true;
+                }
+
+                if (current.Name == "Column" && containing == "Mizzle.Schema")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // col.In(a, b, c) -> [t].[col] IN (?, ?, ?), one bind per value in call
+        // order, which is the order Parameterizer captures the haystack.
+        private BakedCondition? ResolveIn(
+            MemberAccessExpressionSyntax member,
+            SeparatedSyntaxList<ArgumentSyntax> arguments)
+        {
+            if (arguments.Count == 0 || ResolveColumn(member.Expression) is not { } column)
+            {
+                return null;
+            }
+
+            // In(params T[]) called with an array rather than a value list: the
+            // element count is not in the syntax, so the SQL cannot be baked.
+            foreach (var argument in arguments)
+            {
+                if (_model.GetTypeInfo(argument.Expression).Type is IArrayTypeSymbol)
+                {
+                    return null;
+                }
+            }
+
+            var markers = new string(BakedSqlEmitter.BindMarker, 1);
+            var list = string.Join(", ", Enumerable.Repeat(markers, arguments.Count));
+            return new BakedCondition(
+                column.TableAlias, column.DbName, null, null,
+                op: "IN",
+                rightExpression: "(" + list + ")");
+        }
+
+        // Sql.Case(Sql.When(cond, result), ...).Else(fallback) -> CASE WHEN ... END.
+        // Arms render in call order so the bind markers line up with Parameterizer.
+        public string? ResolveCaseSql(ExpressionSyntax expression)
+        {
+            if (UnwrapExprLocal(expression) is not InvocationExpressionSyntax invocation)
+            {
+                return null;
+            }
+
+            ExpressionSyntax? fallback = null;
+            if (invocation.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Else" } elseMember
+                && _model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { ContainingType.Name: "CaseExpr" }
+                && invocation.ArgumentList.Arguments.Count == 1)
+            {
+                fallback = invocation.ArgumentList.Arguments[0].Expression;
+                if (elseMember.Expression is not InvocationExpressionSyntax inner)
+                {
+                    return null;
+                }
+
+                invocation = inner;
+            }
+
+            if (_model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
+                {
+                    Name: "Case",
+                    ContainingType.Name: "Sql"
+                }
+                || invocation.ArgumentList.Arguments.Count == 0)
+            {
+                return null;
+            }
+
+            var sql = new StringBuilder("CASE");
+            foreach (var argument in invocation.ArgumentList.Arguments)
+            {
+                if (ResolveWhenSql(argument.Expression) is not { } arm)
+                {
+                    return null;
+                }
+
+                sql.Append(arm);
+            }
+
+            if (fallback is not null)
+            {
+                if (ResolveValueSql(fallback) is not { } otherwise)
+                {
+                    return null;
+                }
+
+                sql.Append(" ELSE ").Append(otherwise);
+            }
+
+            return sql.Append(" END").ToString();
+        }
+
+        private string? ResolveWhenSql(ExpressionSyntax expression)
+        {
+            if (expression is not InvocationExpressionSyntax invocation
+                || _model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
+                {
+                    Name: "When",
+                    ContainingType.Name: "Sql"
+                }
+                || invocation.ArgumentList.Arguments.Count != 2)
+            {
+                return null;
+            }
+
+            var condition = ResolveConditionSql(invocation.ArgumentList.Arguments[0].Expression);
+            var result = ResolveValueSql(invocation.ArgumentList.Arguments[1].Expression);
+            return condition is null || result is null
+                ? null
+                : " WHEN " + condition + " THEN " + result;
+        }
+
+        // A CASE arm's condition, rendered rather than turned into a BakedCondition:
+        // it sits inside an expression, so it cannot carry its own bind slots.
+        private string? ResolveConditionSql(ExpressionSyntax expression)
+        {
+            if (ResolveCondition(expression) is not { } condition
+                || condition.ConditionalIndex is not null
+                || condition.LeftExpression is not null)
+            {
+                return null;
+            }
+
+            var left = Quote(condition.LeftAlias) + "." + Quote(condition.LeftDbName);
+            if (condition.IsUnary)
+            {
+                return left + " " + condition.Op;
+            }
+
+            if (condition.RightExpression is not null)
+            {
+                return left + " " + condition.Op + " " + condition.RightExpression;
+            }
+
+            var right = condition.IsBind
+                ? new string(BakedSqlEmitter.BindMarker, 1)
+                : Quote(condition.RightAlias!) + "." + Quote(condition.RightDbName!);
+            return left + " " + condition.Op + " " + right;
+        }
+
+        // A CASE result: a column, a rendered expression, or a bound literal.
+        private string? ResolveValueSql(ExpressionSyntax expression)
+        {
+            if (ResolveScalarSql(expression) is { } scalar)
+            {
+                return scalar;
+            }
+
+            // Sql.Value(x) is an Expr but means "bind x", so it binds like a bare
+            // literal does. Any other Expr had to be rendered above, and was not.
+            if (IsSqlValue(expression))
+            {
+                return new string(BakedSqlEmitter.BindMarker, 1);
+            }
+
+            return _model.GetTypeInfo(expression).Type is { } type && IsRenderedOperand(type)
+                ? null
+                : new string(BakedSqlEmitter.BindMarker, 1);
+        }
+
+        private bool IsSqlValue(ExpressionSyntax expression)
+            => expression is InvocationExpressionSyntax invocation
+               && _model.GetSymbolInfo(invocation).Symbol is IMethodSymbol
+               {
+                   Name: "Value",
+                   ContainingType.Name: "Sql"
+               };
 
         // Flattens Sql.And(...) trees in a legacy join's single Expr argument.
         public bool TryFlattenConditions(ExpressionSyntax expression, List<BakedCondition> into)

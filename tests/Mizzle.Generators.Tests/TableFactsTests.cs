@@ -80,6 +80,25 @@ public sealed class TableFactsTests
     }
 
     [Fact]
+    public void AlwaysFilter_modifier_is_extracted()
+    {
+        const string source = """
+            using Mizzle.Postgres;
+            public sealed class Orders : PgTable<Orders>
+            {
+                public Orders() : base("orders") { }
+                public PgColumn<int> Id { get; } = Identity("id").PrimaryKey();
+                public PgColumn<int> TenantId { get; } = Integer("tenant_id").NotNull().AlwaysFilter();
+            }
+            """;
+        var (symbol, compilation) = GetSymbol(source, "Orders");
+        var facts = TableFacts.FromSymbol(symbol, compilation);
+        Assert.NotNull(facts);
+        Assert.False(facts!.Columns[0].IsAlwaysFilter);
+        Assert.True(facts.Columns[1].IsAlwaysFilter);
+    }
+
+    [Fact]
     public void Sql_server_table_is_not_postgres()
     {
         const string source = """

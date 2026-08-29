@@ -58,6 +58,22 @@ public sealed record AggregateExpr(AggregateKind Kind, Expr? Arg) : Expr;
 
 public sealed record CallExpr(string Name, EquatableList<Expr> Args, DialectKind Dialect) : Expr;
 
+// T-SQL CONVERT(type, expr [, style]). SqlType is a type name and Style is a
+// T-SQL style code, not values, so neither is parameterized.
+public sealed record ConvertExpr(string SqlType, Expr Value, int? Style = null) : Expr;
+
+/// <summary>One <c>WHEN condition THEN result</c> arm of a <see cref="CaseExpr"/>.</summary>
+public sealed record CaseWhen(Expr Condition, Expr Result);
+
+// Searched CASE: CASE WHEN c THEN r ... [ELSE e] END. Standard on both dialects.
+// With no ELSE the result is NULL where no arm matches, so a projected CaseExpr
+// is nullable unless the target says otherwise.
+public sealed record CaseExpr(EquatableList<CaseWhen> Whens, Expr? Fallback = null) : Expr
+{
+    /// <summary>Returns this CASE with an <c>ELSE</c> arm.</summary>
+    public CaseExpr Else(Expr result) => this with { Fallback = result };
+}
+
 public static class QueryShape
 {
     public static Expr StripValues(Expr expr) => expr;

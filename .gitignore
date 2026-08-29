@@ -7,3 +7,5 @@ obj/
 *.nupkg
 TestResults/
 BenchmarkDotNet.Artifacts/
+.tmp.sql
+*.tmp.sql

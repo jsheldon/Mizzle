@@ -21,6 +21,9 @@ public interface IColumn
 
     // Opts this column out of MizzleTrimStrings.
     bool IsUntrimmed { get; }
+
+    // Queries against this column's table must mention it in WHERE (MIZ013).
+    bool IsAlwaysFilter { get; }
     ColumnRef ToRef();
 
     // Wraps a domain value for binding, applying the column's storage

@@ -58,6 +58,30 @@ public static class Sql
     /// <summary>An <c>IN</c> list test.</summary>
     public static InExpr In(Expr needle, IReadOnlyList<Expr> haystack) => new(needle, [..haystack]);
 
+    /// <summary>One arm of a <see cref="Case(CaseWhen[])"/>.</summary>
+    public static CaseWhen When(Expr condition, Expr result) => new(condition, result);
+
+    /// <summary>One arm of a <see cref="Case(CaseWhen[])"/> with a literal result.</summary>
+    // Constrained to a value type so it cannot out-rank When(Expr, Expr) on an
+    // Expr-derived result: an exact generic match would beat the derived-to-base
+    // conversion and quietly bind the expression object as a parameter.
+    public static CaseWhen When<T>(Expr condition, T result) where T : struct
+        => new(condition, Value(result));
+
+    /// <summary>One arm of a <see cref="Case(CaseWhen[])"/> with a string result.</summary>
+    public static CaseWhen When(Expr condition, string result) => new(condition, Value(result));
+
+    /// <summary>
+    ///     A searched <c>CASE</c>. Arms are tested in order; chain
+    ///     <see cref="CaseExpr.Else"/> for the fallback, or leave it off to get
+    ///     <c>NULL</c> when nothing matches.
+    /// </summary>
+    /// <example><code>Sql.Case(Sql.When(c.Kind.Eq(504m), 0)).Else(Sql.Value(4))</code></example>
+    public static CaseExpr Case(params CaseWhen[] whens)
+        => whens.Length > 0
+            ? new CaseExpr([..whens])
+            : throw new ArgumentException("A CASE needs at least one WHEN arm.", nameof(whens));
+
     /// <summary>A <c>BETWEEN</c> range test, inclusive of both bounds.</summary>
     public static BetweenExpr Between(Expr value, Expr lo, Expr hi) => new(value, lo, hi);
 
@@ -99,7 +123,13 @@ public static class Sql
     public static SelectItem Item(IColumn column) => new(column.ToRef(), column.ProjectionName);
 
     /// <summary>A literal value, for cases like a constant priority column.</summary>
-    public static ValueExpr Value<T>(T value) => new(value, typeof(T));
+    public static ValueExpr Value<T>(T value)
+        => value is Expr
+            // Binding an expression object as a parameter value emits a
+            // placeholder where the caller meant the expression's SQL.
+            ? throw new ArgumentException(
+                "Value expects a literal; pass the expression itself.", nameof(value))
+            : new ValueExpr(value, typeof(T));
 
 
     public static AggregateExpr Count(Expr arg) => new(AggregateKind.Count, arg);

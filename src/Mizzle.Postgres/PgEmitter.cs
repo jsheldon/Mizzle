@@ -243,8 +243,25 @@ public sealed class PgEmitter : ISqlEmitter
         InExpr inn => $"{Expr(inn.Needle)} IN ({string.Join(", ", inn.Haystack.Select(Expr))})",
         BetweenExpr b => $"{Expr(b.Value)} BETWEEN {Expr(b.Lo)} AND {Expr(b.Hi)}",
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
+        CaseExpr @case => Case(@case),
         _ => throw new NotSupportedException($"Unsupported expression {expr.GetType().Name}.")
     };
+
+    private static string Case(CaseExpr @case)
+    {
+        var sql = new StringBuilder("CASE");
+        foreach (var when in @case.Whens)
+        {
+            sql.Append(" WHEN ").Append(Expr(when.Condition)).Append(" THEN ").Append(Expr(when.Result));
+        }
+
+        if (@case.Fallback is not null)
+        {
+            sql.Append(" ELSE ").Append(Expr(@case.Fallback));
+        }
+
+        return sql.Append(" END").ToString();
+    }
 
     private static string Call(CallExpr call)
     {

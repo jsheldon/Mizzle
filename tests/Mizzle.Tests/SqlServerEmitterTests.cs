@@ -78,6 +78,22 @@ public sealed class SqlServerEmitterTests
             sql.Sql);
     }
 
+    [Fact]
+    public void Nested_TSql_Convert_emits_CONVERT()
+    {
+        var query = BaseSelect() with
+        {
+            Where = new BinaryExpr(
+                BinaryOp.Eq,
+                new ColumnRef("r", "evd_fdb_vocab_id", typeof(string)),
+                TSql.Convert(SqlType.VarChar(20), TSql.Convert(SqlType.Int, new ColumnRef("pm", "medid", typeof(int)))))
+        };
+        var sql = new SqlServerEmitter().Emit(query, []);
+        Assert.Equal(
+            "SELECT [u].[email] FROM [public].[users] AS [u] WHERE [r].[evd_fdb_vocab_id] = CONVERT(varchar(20), CONVERT(int, [pm].[medid]))",
+            sql.Sql);
+    }
+
     private static SelectQuery BaseSelect() => new(
         Select: [new SelectItem(new ColumnRef("u", "email", typeof(string)), null)],
         From: new FromSource("users", "public", "u"),
