@@ -7,6 +7,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
     private readonly MsSqlContainer _container = new MsSqlBuilder().Build();
 
     public SqlDataSource DataSource { get; private set; } = null!;
+    public string ConnectionString => _container.GetConnectionString();
 
     public async Task InitializeAsync()
     {

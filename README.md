@@ -194,6 +194,16 @@ gets a real alias such as `AS [Title]`. Projection diagnostics use the aliased
 name, so a typo reports `MIZ003` and a type mismatch reports `MIZ010` at the
 call site.
 
+`As` also accepts `nameof(...)`, which keeps the alias in sync if the target
+member is renamed:
+
+```csharp
+books.BookId.As(nameof(BookSummary.Id))
+```
+
+Anything else -- a field, a variable, string concatenation -- is not a
+compile-time constant and falls back to the runtime path.
+
 The delegate overloads are always runtime mapped:
 
 ```csharp

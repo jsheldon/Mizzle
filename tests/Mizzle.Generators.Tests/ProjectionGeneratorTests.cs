@@ -499,6 +499,49 @@ public sealed class ProjectionGeneratorTests
     }
 
     [Fact]
+    public void Nameof_alias_stays_on_the_baked_path()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public class PersonRow
+            {
+                public Guid PatientId { get; set; }
+                public string PostalCode { get; set; } = "";
+            }
+
+            public static class NameofAliasQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var p = new Persons();
+                    var rows = await db.Select(
+                            p.PersonId.As(nameof(PersonRow.PatientId)),
+                            p.Zip.As(nameof(PersonRow.PostalCode)))
+                        .From(p)
+                        .ToListAsync<PersonRow>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(AliasTables, callSite);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Empty(result.Diagnostics);
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("PatientId = r.GetGuid(0)", generated, StringComparison.Ordinal);
+        Assert.Contains("PostalCode = r.GetString(1)", generated, StringComparison.Ordinal);
+        Assert.Contains(
+            "SELECT \\\"persons\\\".\\\"person_id\\\" AS \\\"PatientId\\\", \\\"persons\\\".\\\"zip\\\" AS \\\"PostalCode\\\"",
+            generated,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Alias_emits_sql_as_clause()
     {
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(AliasTables, AliasCallSite));

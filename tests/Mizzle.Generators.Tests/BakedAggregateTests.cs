@@ -65,6 +65,45 @@ public sealed class BakedAggregateTests
     }
 
     [Fact]
+    public void Nameof_aggregate_alias_stays_on_the_baked_path()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record CustomerTotals(Guid CustomerId, long Orders);
+
+            public static class NameofAggQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(
+                            o.CustomerId,
+                            Sql.As(Sql.Count(), nameof(CustomerTotals.Orders)))
+                        .From(o)
+                        .GroupBy(o.CustomerId)
+                        .ToListAsync<CustomerTotals>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains(
+            "SELECT \\\"orders\\\".\\\"customer_id\\\", count(*) AS \\\"Orders\\\"",
+            generated, StringComparison.Ordinal);
+        Assert.Contains("Orders: r.GetFieldValue<long>(1)", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Aggregate_result_type_follows_the_member_across_dialects()
     {
         // count(*) is bigint on Postgres and int on SQL Server; declaring int here

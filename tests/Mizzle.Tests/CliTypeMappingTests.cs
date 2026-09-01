@@ -51,12 +51,33 @@ public sealed class CliTypeMappingTests
     [Fact]
     public void Unsupported_type_fails_with_clear_code()
     {
-        var column = new ColumnInfo("public", "users", "metadata", "jsonb", "jsonb", null, true, false, false);
+        var column = new ColumnInfo("public", "users", "location", "point", "point", null, true, false, false);
 
         var ex = Assert.Throws<CliFailure>(() => TypeMappings.Resolve(ProviderKind.Postgres, column));
 
         Assert.Equal("MZCLI021", ex.Code);
-        Assert.Contains("public.users.metadata", ex.Message, StringComparison.Ordinal);
-        Assert.Contains("Unsupported Postgres type 'jsonb'", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("public.users.location", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Unsupported Postgres type 'point'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("smallint", "int2", "short", "SmallInt")]
+    [InlineData("numeric", "numeric", "decimal", "Numeric")]
+    [InlineData("money", "money", "decimal", "Money")]
+    [InlineData("real", "float4", "float", "Real")]
+    [InlineData("double precision", "float8", "double", "DoublePrecision")]
+    [InlineData("timestamp without time zone", "timestamp", "DateTime", "Timestamp")]
+    [InlineData("time without time zone", "time", "TimeOnly", "Time")]
+    [InlineData("bytea", "bytea", "byte[]", "Bytea")]
+    [InlineData("json", "json", "string", "Json")]
+    [InlineData("jsonb", "jsonb", "string", "Jsonb")]
+    public void Postgres_expanded_types_are_supported(string storeType, string nativeType, string clrType, string factory)
+    {
+        var column = new ColumnInfo("public", "readings", "value", storeType, nativeType, null, true, false, false);
+
+        var mapping = TypeMappings.Resolve(ProviderKind.Postgres, column);
+
+        Assert.Equal(clrType, mapping.ClrType);
+        Assert.Equal(factory, mapping.Factory);
     }
 }

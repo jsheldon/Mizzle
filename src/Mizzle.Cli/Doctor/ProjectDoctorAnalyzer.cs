@@ -74,7 +74,7 @@ internal static class ProjectDoctorAnalyzer
             issues.Add(new DoctorIssue("MZCLI086", "Old table constructor alias syntax was found. Use WithAlias at the query site."));
         }
 
-        if (warnOnConfiguration && Regex.IsMatch(code, @"\b(?:Text|NText|Varchar|Char|Integer|Int|SmallInt|TinyInt|BigInt|Decimal|Numeric|Real|Float|Boolean|Bit|Uuid|UniqueIdentifier|Date|Timestamptz|DateTime|DateTime2|Timestamp|Identity|NVarChar|NVarCharMax|VarChar)\s*\(\s*@?[A-Za-z_]", RegexOptions.Multiline))
+        if (warnOnConfiguration && Regex.IsMatch(code, @"\b(?:Text|NText|Varchar|Char|Integer|Int|SmallInt|TinyInt|BigInt|Decimal|Numeric|Money|Real|DoublePrecision|Float|Boolean|Bit|Uuid|UniqueIdentifier|Date|Time|Timestamptz|DateTime|DateTime2|Timestamp|Identity|NVarChar|NVarCharMax|VarChar|Bytea|Json|Jsonb)\s*\(\s*@?[A-Za-z_]", RegexOptions.Multiline))
         {
             issues.Add(new DoctorIssue("MZCLI087", "A column factory appears to use a non-literal database name."));
         }

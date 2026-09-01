@@ -30,24 +30,29 @@ internal sealed class PostgresInspector : IDatabaseInspector
              AND pk.table_name = c.table_name
              AND pk.column_name = c.column_name
             WHERE c.table_schema = COALESCE(@schema, c.table_schema)
-              AND (@tables IS NULL OR c.table_name = ANY(@tables))
               AND c.table_schema NOT IN ('pg_catalog', 'information_schema')
             ORDER BY c.table_schema, c.table_name, c.ordinal_position
             """;
 
+        var filter = tables is { Count: > 0 } ? new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase) : null;
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("schema", (object?)schema ?? DBNull.Value);
-        command.Parameters.AddWithValue("tables", tables is { Count: > 0 } ? tables.ToArray() : DBNull.Value);
 
         var columns = new List<ColumnInfo>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
+            var table = reader.GetString(1);
+            if (filter is not null && !filter.Contains(table))
+            {
+                continue;
+            }
+
             columns.Add(new ColumnInfo(
                 reader.GetString(0),
-                reader.GetString(1),
+                table,
                 reader.GetString(2),
                 reader.GetString(3),
                 reader.GetString(4),

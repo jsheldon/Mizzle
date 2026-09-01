@@ -110,6 +110,42 @@ public sealed class CliProjectDoctorAnalyzerTests
     }
 
     [Fact]
+    public void Reports_non_literal_names_on_expanded_type_factories()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "mizzle-doctor-expanded-factories-" + Guid.NewGuid()));
+        try
+        {
+            var project = Path.Combine(root.FullName, "App.csproj");
+            File.WriteAllText(project, """
+                <Project>
+                  <PropertyGroup>
+                    <MizzleQueryMode>Strict</MizzleQueryMode>
+                    <Nullable>enable</Nullable>
+                  </PropertyGroup>
+                </Project>
+                """);
+            File.WriteAllText(Path.Combine(root.FullName, "Readings.cs"), """
+                using Mizzle.Postgres;
+
+                public sealed class Readings : PgTable<Readings>
+                {
+                    private const string BalanceName = "balance";
+                    public Readings() : base("readings", "public", "r") { }
+                    public PgColumn<decimal> Balance { get; } = Money(BalanceName);
+                }
+                """);
+
+            var report = ProjectDoctorAnalyzer.Analyze(ProjectDoctorReader.Read(project, root.FullName));
+
+            Assert.Contains(report.Issues, i => i.Code == "MZCLI087");
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void Reports_mismatched_central_package_versions()
     {
         var root = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "mizzle-doctor-central-versions-" + Guid.NewGuid()));

@@ -729,13 +729,12 @@ internal static class BakedChainWalker
                 }
                 && _model.GetSymbolInfo(asMember).Symbol is IMethodSymbol { ContainingType.Name: "Sql" })
             {
-                if (asArgs[1].Expression is not LiteralExpressionSyntax literal
-                    || !literal.IsKind(SyntaxKind.StringLiteralExpression))
+                if (TryGetAliasName(asArgs[1].Expression) is not { } sqlAlias)
                 {
                     return null;
                 }
 
-                alias = literal.Token.ValueText;
+                alias = sqlAlias;
                 expression = asArgs[0].Expression;
             }
 
@@ -889,6 +888,13 @@ internal static class BakedChainWalker
             return null;
         }
 
+        // A string literal or nameof(...) -- both fold to a compile-time constant,
+        // so an alias written as nameof(Row.Member) survives a rename of Member.
+        // Anything else (a field, a variable, string concatenation) is not a
+        // constant and falls back to the runtime path.
+        private string? TryGetAliasName(ExpressionSyntax expression)
+            => _model.GetConstantValue(expression) is { HasValue: true, Value: string alias } ? alias : null;
+
         // t.Col -> (table facts, column fact) as a BakedColumn.
         public BakedColumn? ResolveColumn(ExpressionSyntax expression)
         {
@@ -899,13 +905,12 @@ internal static class BakedChainWalker
                     ArgumentList.Arguments: { Count: 1 } asArgs
                 })
             {
-                if (asArgs[0].Expression is not LiteralExpressionSyntax asLiteral
-                    || !asLiteral.IsKind(SyntaxKind.StringLiteralExpression))
+                if (TryGetAliasName(asArgs[0].Expression) is not { } asAlias)
                 {
                     return null;
                 }
 
-                projectionName = asLiteral.Token.ValueText;
+                projectionName = asAlias;
                 expression = asMember.Expression;
             }
 

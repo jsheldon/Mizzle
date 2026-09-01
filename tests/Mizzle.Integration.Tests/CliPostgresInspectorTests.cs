@@ -58,6 +58,30 @@ public sealed class CliPostgresInspectorTests : IClassFixture<PostgresFixture>
     }
 
     [DockerFact]
+    public async Task Table_filter_is_case_insensitive()
+    {
+        await using var conn = await _fx.DataSource.OpenConnectionAsync();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                DROP TABLE IF EXISTS public.cli_widgets;
+                CREATE TABLE public.cli_widgets (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY);
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var inspector = new PostgresInspector();
+        var tables = await inspector.InspectAsync(
+            _fx.ConnectionString,
+            "public",
+            ["CLI_WIDGETS"],
+            CancellationToken.None);
+
+        var table = Assert.Single(tables);
+        Assert.Equal("cli_widgets", table.Name);
+    }
+
+    [DockerFact]
     public async Task Requested_missing_table_is_reported_clearly()
     {
         var inspector = new PostgresInspector();
