@@ -378,14 +378,7 @@ internal static class BakedChainWalker
                         return null;
                     }
 
-                    state.Where.Add(new BakedCondition(
-                        conditional.LeftAlias, conditional.LeftDbName,
-                        conditional.RightAlias, conditional.RightDbName,
-                        conditional.LeftExpression,
-                        state.ConditionalCount,
-                        conditional.Op,
-                        conditional.IsUnary,
-                        conditional.RightExpression));
+                    state.Where.Add(conditional.WithConditionalIndex(state.ConditionalCount));
                     state.ConditionalCount++;
                     break;
                 case "Having" when args.Count == 1:
@@ -1091,6 +1084,90 @@ internal static class BakedChainWalker
         // X.Eq(Y): column vs column, column vs TSql.Convert, or column vs runtime bind.
         public BakedCondition? ResolveCondition(ExpressionSyntax expression)
         {
+            // Sql.And(...)/Sql.Or(...): each argument resolves recursively, in
+            // argument order -- SQL AND/OR are associative, so a flat join
+            // renders correctly regardless of how the params-array overload
+            // folds its runtime Expr tree, as long as the argument order (and
+            // so the bind order) matches.
+            if (UnwrapExprLocal(expression) is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "And" or "Or" } combinatorMember,
+                    ArgumentList.Arguments: { Count: >= 2 } combinatorArgs
+                }
+                && _model.GetSymbolInfo(combinatorMember).Symbol is IMethodSymbol { ContainingType.Name: "Sql" })
+            {
+                var children = new List<BakedCondition>(combinatorArgs.Count);
+                foreach (var argument in combinatorArgs)
+                {
+                    if (ResolveCondition(argument.Expression) is not { } child)
+                    {
+                        return null;
+                    }
+
+                    children.Add(child);
+                }
+
+                return new BakedCondition(combinatorMember.Name.Identifier.Text.ToUpperInvariant(), children);
+            }
+
+            // Sql.Eq(left, right): a free-standing comparison for operands that
+            // are not a bare column receiver -- e.g.
+            // Sql.Eq(TSql.RTrim(col), Sql.Value("")) inside a composite
+            // Sql.And/Sql.Or group, where column.Eq(value) does not fit because
+            // the column is wrapped in a rendered expression.
+            if (UnwrapExprLocal(expression) is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Eq" } sqlEqMember,
+                    ArgumentList.Arguments: { Count: 2 } sqlEqArgs
+                }
+                && _model.GetSymbolInfo(sqlEqMember).Symbol is IMethodSymbol { ContainingType.Name: "Sql" })
+            {
+                string leftAlias, leftDbName;
+                string? leftExpr = null;
+                if (ResolveColumn(sqlEqArgs[0].Expression) is { } leftColumn)
+                {
+                    leftAlias = leftColumn.TableAlias;
+                    leftDbName = leftColumn.DbName;
+                }
+                else if (ResolveConvertSql(sqlEqArgs[0].Expression) is { } leftConvert)
+                {
+                    (leftAlias, leftDbName, leftExpr) = ("", "", leftConvert);
+                }
+                else if (ResolveTSqlCallSql(sqlEqArgs[0].Expression) is { } leftCall)
+                {
+                    (leftAlias, leftDbName, leftExpr) = ("", "", leftCall);
+                }
+                else
+                {
+                    return null;
+                }
+
+                if (ResolveColumn(sqlEqArgs[1].Expression) is { } rightColumn)
+                {
+                    return new BakedCondition(leftAlias, leftDbName, rightColumn.TableAlias, rightColumn.DbName, leftExpr);
+                }
+
+                if (ResolveConvertSql(sqlEqArgs[1].Expression) is { } rightConvert)
+                {
+                    return new BakedCondition(leftAlias, leftDbName, null, null, leftExpr, rightExpression: rightConvert);
+                }
+
+                if (ResolveTSqlCallSql(sqlEqArgs[1].Expression) is { } rightCall)
+                {
+                    return new BakedCondition(leftAlias, leftDbName, null, null, leftExpr, rightExpression: rightCall);
+                }
+
+                // Sql.Value(x) is an Expr but means "bind x", same as a bare
+                // literal. Any other Column<T>/Expr right side had to be
+                // rendered above; reaching here with one means the shape
+                // cannot be baked (see the IsRenderedOperand comment further
+                // down).
+                return !IsSqlValue(sqlEqArgs[1].Expression)
+                    && IsRenderedOperand(_model.GetTypeInfo(sqlEqArgs[1].Expression).Type)
+                    ? null
+                    : new BakedCondition(leftAlias, leftDbName, null, null, leftExpr);
+            }
+
             if (expression is not InvocationExpressionSyntax
                 {
                     Expression: MemberAccessExpressionSyntax member,
@@ -1298,9 +1375,13 @@ internal static class BakedChainWalker
         // it sits inside an expression, so it cannot carry its own bind slots.
         private string? ResolveConditionSql(ExpressionSyntax expression)
         {
+            // Composite Sql.And/Sql.Or conditions render through
+            // BakedSqlEmitter.Condition for WHERE/WhereIf; this walk-time
+            // renderer predates that and does not understand Combinator/Children.
             if (ResolveCondition(expression) is not { } condition
                 || condition.ConditionalIndex is not null
-                || condition.LeftExpression is not null)
+                || condition.LeftExpression is not null
+                || condition.Combinator is not null)
             {
                 return null;
             }

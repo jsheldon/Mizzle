@@ -78,6 +78,21 @@ internal sealed class BakedCondition
         RightExpression = rightExpression;
     }
 
+    // A Sql.And(...)/Sql.Or(...) group: Children render parenthesized, joined
+    // by Combinator, in argument order. That order is what has to match the
+    // runtime Parameterizer's left-to-right walk of the same Expr tree -- SQL
+    // AND/OR being associative, a flat join is equivalent to the tree Sql.Or's
+    // params-array overload folds at runtime, so no nesting is needed here.
+    public BakedCondition(string combinator, IReadOnlyList<BakedCondition> children, int? conditionalIndex = null)
+    {
+        Combinator = combinator;
+        Children = children;
+        ConditionalIndex = conditionalIndex;
+        LeftAlias = "";
+        LeftDbName = "";
+        Op = "";
+    }
+
     // Set when the left side is an aggregate rather than a column, as in HAVING.
     public string? LeftExpression { get; }
 
@@ -100,7 +115,19 @@ internal sealed class BakedCondition
     public string? RightAlias { get; }
     public string? RightDbName { get; }
 
+    // "AND" or "OR" for a composite condition; null for a leaf comparison.
+    public string? Combinator { get; }
+    public IReadOnlyList<BakedCondition>? Children { get; }
+
     public bool IsBind => RightAlias is null && RightExpression is null;
+
+    // Carries this condition (leaf or composite) into a WhereIf variant slot
+    // without losing composite structure -- a plain field-copy constructor
+    // call would silently drop Combinator/Children.
+    public BakedCondition WithConditionalIndex(int index)
+        => Combinator is { } combinator
+            ? new BakedCondition(combinator, Children!, index)
+            : new BakedCondition(LeftAlias, LeftDbName, RightAlias, RightDbName, LeftExpression, index, Op, IsUnary, RightExpression);
 }
 
 internal sealed class BakedJoin
@@ -378,6 +405,17 @@ internal static class BakedSqlEmitter
 
     private static string Condition(BakedQuerySpec spec, BakedCondition condition, ref int slot)
     {
+        if (condition.Combinator is { } combinator)
+        {
+            var parts = new List<string>(condition.Children!.Count);
+            foreach (var child in condition.Children)
+            {
+                parts.Add(Condition(spec, child, ref slot));
+            }
+
+            return "(" + string.Join($" {combinator} ", parts) + ")";
+        }
+
         var left = condition.LeftExpression is { } leftExpression
             ? Substitute(spec, leftExpression, ref slot)
             : Column(spec, condition.LeftAlias, condition.LeftDbName);
