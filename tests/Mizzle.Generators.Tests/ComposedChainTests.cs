@@ -127,4 +127,61 @@ public sealed class ComposedChainTests
         Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014");
         Assert.DoesNotContain("RowIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
+
+    // Page/CursorPage went through the same dynamic-mapper forwarding as
+    // ToListAsync/First/Single once DelegateTerminatorMethods knew about them --
+    // before that, a reassigned local ending in ToCursorPageAsync<T>() fell to
+    // MIZ014 with no mapper at all, unlike every other typed terminator.
+    [Fact]
+    public void A_reassigned_local_with_cursor_page_terminator_still_gets_a_generated_mapper()
+    {
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p).OrderBy(p.PersonId).Limit(10);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var page = await q.ToCursorPageAsync<Row>();
+            """)));
+
+        Assert.Contains("RowIntoMapper", generated, StringComparison.Ordinal);
+        Assert.Contains(".ToCursorPageAsync(global::Mizzle.Generated.Projections.", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reassigned_local_with_cursor_page_terminator_compiles_cleanly()
+    {
+        var (_, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p).OrderBy(p.PersonId).Limit(10);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var page = await q.ToCursorPageAsync<Row>();
+            """));
+
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+    }
+
+    // The terminator doesn't have to sit directly on the tracked local -- a
+    // projection-preserving call chained immediately in front of it (q.Limit(10).ToListAsync<T>())
+    // must resolve the same as q.ToListAsync<T>() alone.
+    [Fact]
+    public void A_projection_preserving_call_chained_before_the_terminator_still_gets_a_generated_mapper()
+    {
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p).OrderBy(p.PersonId);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var rows = await q.Limit(10).ToListAsync<Row>();
+            """)));
+
+        Assert.Contains("RowIntoMapper", generated, StringComparison.Ordinal);
+        Assert.Contains(".ToListAsync(global::Mizzle.Generated.Projections.", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reassigned_local_with_page_terminator_threads_includeTotal_and_compiles_cleanly()
+    {
+        var (_, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p).OrderBy(p.PersonId).Limit(10);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var page = await q.ToPageAsync<Row>(includeTotal: true);
+            """));
+
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+    }
 }

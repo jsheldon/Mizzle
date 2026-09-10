@@ -250,6 +250,7 @@ public sealed class SqlServerEmitter : ISqlEmitter
         ParamRef param => $"@p{param.Slot}",
         ValueExpr => throw new InvalidOperationException("Query was not parameterized before emit."),
         BinaryExpr bin => Binary(bin),
+        LikeExpr like => Like(like),
         UnaryExpr unary => Unary(unary),
         AggregateExpr agg => Aggregate(agg),
         CallExpr call => Call(call),
@@ -313,6 +314,14 @@ public sealed class SqlServerEmitter : ISqlEmitter
     {
         var name = agg.Kind.ToString().ToLowerInvariant();
         return agg.Arg is null ? $"{name}(*)" : $"{name}({Expr(agg.Arg)})";
+    }
+
+    // CaseInsensitive can never reach here: the capability check (FeatureCollector/
+    // SqlServerCapabilities) already rejects it before emission, same as plain ILIKE.
+    private static string Like(LikeExpr like)
+    {
+        var escapeLiteral = like.Escape == '\'' ? "''" : like.Escape.ToString();
+        return $"{Expr(like.Left)} LIKE {Expr(like.Right)} ESCAPE '{escapeLiteral}'";
     }
 
     private static string Binary(BinaryExpr bin)

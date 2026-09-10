@@ -600,13 +600,18 @@ internal static class BakedChainWalker
         ExpressionSyntax builderExpression,
         SemanticModel model)
     {
-        if (builderExpression is not (IdentifierNameSyntax or MemberAccessExpressionSyntax)
-            || model.GetTypeInfo(builderExpression).Type?.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
+        // A projection-preserving call or two (q.Limit(pageSize).ToCursorPageAsync<T>())
+        // often sits directly in front of the terminator rather than being folded into
+        // its own reassignment -- walk back through those the same way a reassignment's
+        // own right-hand side is walked, before resolving which local/field is tracked.
+        var root = UnwrapProjectionPreservingPrefix(builderExpression);
+        if (root is not (IdentifierNameSyntax or MemberAccessExpressionSyntax)
+            || model.GetTypeInfo(root).Type?.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
         {
             return null;
         }
 
-        var symbol = model.GetSymbolInfo(builderExpression).Symbol;
+        var symbol = model.GetSymbolInfo(root).Symbol;
         if (symbol is not (ILocalSymbol or IFieldSymbol))
         {
             return null;
@@ -628,6 +633,29 @@ internal static class BakedChainWalker
         }
 
         return ResolveSelectOnly(initializerChain, model);
+    }
+
+    // Walks back through a chain of projection-preserving calls to the root
+    // identifier/member they're ultimately invoked on -- mirrors IsProjectionPreservingChain's
+    // own walk, but without yet knowing which symbol to check against (the caller resolves
+    // that next). A chain that hits a non-allowlisted call anywhere returns the original
+    // expression unchanged, so the caller's own IdentifierNameSyntax/MemberAccessExpressionSyntax
+    // check correctly rejects it.
+    private static ExpressionSyntax UnwrapProjectionPreservingPrefix(ExpressionSyntax expression)
+    {
+        var current = expression;
+        while (current is InvocationExpressionSyntax invocation)
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax member
+                || !ProjectionPreservingMethods.Contains(member.Name.Identifier.Text))
+            {
+                return expression;
+            }
+
+            current = member.Expression;
+        }
+
+        return current;
     }
 
     private static bool EveryReassignmentPreservesProjection(ISymbol symbol, SyntaxNode declaration, SemanticModel model)

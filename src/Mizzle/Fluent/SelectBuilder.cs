@@ -203,22 +203,64 @@ public sealed class SelectBuilder
             throw new ArgumentException("After requires one value per ORDER BY column.", nameof(cursor));
         }
 
+        for (var i = 0; i < cursor.Length; i++)
+        {
+            if (!Equals(cursor[i].Column.ToRef(), _orderBy[i].Expr))
+            {
+                throw new ArgumentException(
+                    $"After's cursor column at position {i} does not match the ORDER BY column at that position.",
+                    nameof(cursor));
+            }
+        }
+
+        // Default NULL ordering (SQL Server: NULLS FIRST ascending, NULLS LAST
+        // descending -- the same convention this codebase already relies on
+        // elsewhere) means a plain "> NULL"/"= NULL" comparison is wrong, not just
+        // unhandled: both are always SQL UNKNOWN, so the whole seek predicate would
+        // silently match zero rows the moment any cursor column is null.
         Expr? seek = null;
         Expr? equalityPrefix = null;
         for (var i = 0; i < cursor.Length; i++)
         {
             var column = cursor[i].Column.ToRef();
-            var value = new ValueExpr(cursor[i].Value, cursor[i].Column.ClrType);
-            var comparison = _orderBy[i].Descending
-                ? new BinaryExpr(BinaryOp.Lt, column, value)
-                : new BinaryExpr(BinaryOp.Gt, column, value);
-            var term = equalityPrefix is null ? comparison : Sql.And(equalityPrefix, comparison);
-            seek = seek is null ? term : Sql.Or(seek, term);
-            var eq = new BinaryExpr(BinaryOp.Eq, column, value);
-            equalityPrefix = equalityPrefix is null ? eq : Sql.And(equalityPrefix, eq);
+            var descending = _orderBy[i].Descending;
+            var cursorValue = cursor[i].Value;
+
+            Expr? greaterTerm;
+            Expr equalTerm;
+            if (cursorValue is not null)
+            {
+                var bound = cursor[i].Column.Bind(cursorValue);
+                greaterTerm = descending
+                    ? new BinaryExpr(BinaryOp.Lt, column, bound)
+                    : new BinaryExpr(BinaryOp.Gt, column, bound);
+                equalTerm = new BinaryExpr(BinaryOp.Eq, column, bound);
+            }
+            else
+            {
+                // ASC (NULLS FIRST): any non-null value sorts after a null.
+                // DESC (NULLS LAST): nothing sorts after a trailing null on this
+                // column -- only a tie (also null) can continue via the next
+                // tie-break column.
+                greaterTerm = descending ? null : new UnaryExpr(UnaryOp.IsNotNull, column);
+                equalTerm = new UnaryExpr(UnaryOp.IsNull, column);
+            }
+
+            if (greaterTerm is not null)
+            {
+                var term = equalityPrefix is null ? greaterTerm : Sql.And(equalityPrefix, greaterTerm);
+                seek = seek is null ? term : Sql.Or(seek, term);
+            }
+
+            equalityPrefix = equalityPrefix is null ? equalTerm : Sql.And(equalityPrefix, equalTerm);
         }
 
-        return Copy(where: _where is null ? seek : Sql.And(_where, seek!));
+        // Every column contributed a DESC/null tie with nothing "after" it: no row
+        // can satisfy this cursor. A literal always-false comparison keeps this a
+        // normal bound predicate rather than a special empty-result code path.
+        seek ??= new BinaryExpr(BinaryOp.Eq, new ValueExpr(1, typeof(int)), new ValueExpr(0, typeof(int)));
+
+        return Copy(where: _where is null ? seek : Sql.And(_where, seek));
     }
 
     public SelectQuery Build()

@@ -47,6 +47,42 @@ public sealed class ColumnOperatorTests
     }
 
     [Fact]
+    public void Like_and_ILike_with_escape_emit_the_escape_clause()
+    {
+        var u = new Users().WithAlias("u");
+        Assert.EndsWith(
+            "\"u\".\"email\" LIKE $1 ESCAPE '\\'",
+            EmitWhere(u.Email.Like("%a\\%%", '\\')),
+            StringComparison.Ordinal);
+        Assert.EndsWith(
+            "\"u\".\"email\" ILIKE $1 ESCAPE '\\'",
+            EmitWhere(u.Email.ILike("%a\\%%", '\\')),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Like_with_escape_binds_the_pattern_as_a_parameter()
+    {
+        var u = new Users().WithAlias("u");
+        var q = new SelectBuilder()
+            .Select(u.Id)
+            .From(u.ToFrom())
+            .Where(u.Email.Like("%a\\%%", '\\'))
+            .Build();
+
+        var (_, values) = Parameterizer.Run(q);
+        Assert.Equal("%a\\%%", Assert.Single(values));
+    }
+
+    [Fact]
+    public void LikePattern_helpers_escape_wildcards_and_the_escape_character_itself()
+    {
+        Assert.Equal("%100\\%\\_off\\\\ish%", LikePattern.Contains("100%_off\\ish", '\\'));
+        Assert.Equal("100\\%off%", LikePattern.StartsWith("100%off", '\\'));
+        Assert.Equal("100\\%off", LikePattern.Exact("100%off", '\\'));
+    }
+
+    [Fact]
     public void Variadic_and_folds_left()
     {
         var u = new Users().WithAlias("u");

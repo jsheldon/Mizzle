@@ -649,6 +649,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         ["FirstOrDefault"] = "FirstOrDefaultAsync",
         ["Single"] = "SingleAsync",
         ["SingleOrDefault"] = "SingleOrDefaultAsync",
+        ["Page"] = "ToPageAsync",
+        ["CursorPage"] = "ToCursorPageAsync",
     };
 
     private static void EmitInterceptor(
@@ -699,7 +701,10 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         // (T)(object) cast the baked path below uses.
         if (dynamic)
         {
-            var call = $"await builder.{DelegateTerminatorMethods[terminator]}(global::Mizzle.Generated.Projections.{mapper}.Read, cancellationToken)";
+            var mapperRead = $"global::Mizzle.Generated.Projections.{mapper}.Read";
+            var call = terminator == "Page"
+                ? $"await builder.{DelegateTerminatorMethods[terminator]}({mapperRead}, includeTotal, cancellationToken)"
+                : $"await builder.{DelegateTerminatorMethods[terminator]}({mapperRead}, cancellationToken)";
             switch (terminator)
             {
                 case "ToList":
@@ -709,6 +714,10 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 case "First":
                 case "Single":
                     sb.Append("            return (T)(object)(").Append(call).AppendLine(")!;");
+                    break;
+                case "Page":
+                case "CursorPage":
+                    sb.Append("            return (global::Mizzle.Paging.Page<T>)(object)(").Append(call).AppendLine(");");
                     break;
                 default:
                     sb.Append("            return (T?)(object?)(").Append(call).AppendLine(");");

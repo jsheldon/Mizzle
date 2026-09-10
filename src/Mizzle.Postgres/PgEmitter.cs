@@ -237,6 +237,7 @@ public sealed class PgEmitter : ISqlEmitter
         ParamRef param => $"${param.Slot + 1}",
         ValueExpr => throw new InvalidOperationException("Query was not parameterized before emit."),
         BinaryExpr bin => Binary(bin),
+        LikeExpr like => Like(like),
         UnaryExpr unary => Unary(unary),
         AggregateExpr agg => Aggregate(agg),
         CallExpr call => Call(call),
@@ -297,6 +298,13 @@ public sealed class PgEmitter : ISqlEmitter
     {
         var name = agg.Kind.ToString().ToLowerInvariant();
         return agg.Arg is null ? $"{name}(*)" : $"{name}({Expr(agg.Arg)})";
+    }
+
+    private static string Like(LikeExpr like)
+    {
+        var op = like.CaseInsensitive ? "ILIKE" : "LIKE";
+        var escapeLiteral = like.Escape == '\'' ? "''" : like.Escape.ToString();
+        return $"{Expr(like.Left)} {op} {Expr(like.Right)} ESCAPE '{escapeLiteral}'";
     }
 
     private static string Binary(BinaryExpr bin)

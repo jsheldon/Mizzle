@@ -170,6 +170,15 @@ public static class FeatureCollector
                 CollectExpr(ilike.Left, features);
                 CollectExpr(ilike.Right, features);
                 break;
+            case LikeExpr { CaseInsensitive: true } ilikeEscaped:
+                features.Add(Feature.ILike);
+                CollectExpr(ilikeEscaped.Left, features);
+                CollectExpr(ilikeEscaped.Right, features);
+                break;
+            case LikeExpr like:
+                CollectExpr(like.Left, features);
+                CollectExpr(like.Right, features);
+                break;
             case BinaryExpr bin:
                 CollectExpr(bin.Left, features);
                 CollectExpr(bin.Right, features);

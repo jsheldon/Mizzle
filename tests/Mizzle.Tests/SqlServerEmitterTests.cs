@@ -55,6 +55,34 @@ public sealed class SqlServerEmitterTests
     }
 
     [Fact]
+    public void SqlServer_like_with_escape_emits_escape_clause()
+    {
+        var p = new ParamRef(0, typeof(string));
+        var query = BaseSelect() with
+        {
+            Where = new LikeExpr(new ColumnRef("u", "email", typeof(string)), p, '\\', CaseInsensitive: false)
+        };
+        var sql = new SqlServerEmitter().Emit(query, ["%x%"]);
+        Assert.Equal(
+            "SELECT [u].[email] FROM [public].[users] AS [u] WHERE [u].[email] LIKE @p0 ESCAPE '\\'",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_ilike_with_escape_throws()
+    {
+        var p = new ParamRef(0, typeof(string));
+        var query = BaseSelect() with
+        {
+            Where = new LikeExpr(new ColumnRef("u", "email", typeof(string)), p, '\\', CaseInsensitive: true)
+        };
+        var ex = Assert.Throws<UnsupportedFeatureException>(
+            () => new SqlServerEmitter().Emit(query, ["%x%"]));
+        Assert.Equal(Feature.ILike, ex.Feature);
+        Assert.Equal(DialectKind.SqlServer, ex.Dialect);
+    }
+
+    [Fact]
     public void Inner_join_order_distinct()
     {
         var query = BaseSelect() with

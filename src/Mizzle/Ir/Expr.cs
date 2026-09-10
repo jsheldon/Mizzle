@@ -30,6 +30,11 @@ public enum BinaryOp
     ILike
 }
 
+// A LIKE/ILIKE with an explicit ESCAPE character, kept separate from BinaryExpr's
+// plain Like/ILike ops (which stay pattern-only, no escape clause) rather than
+// growing BinaryExpr an optional field every other BinaryOp would carry for nothing.
+public sealed record LikeExpr(Expr Left, Expr Right, char Escape, bool CaseInsensitive) : Expr;
+
 public sealed record UnaryExpr(UnaryOp Op, Expr Operand) : Expr;
 
 public enum UnaryOp

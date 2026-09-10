@@ -74,6 +74,7 @@ public static class Parameterizer
                 "Query already contains parameter slots; parameterization must run exactly once."),
             ColumnRef => expr,
             BinaryExpr bin => bin with { Left = Rewrite(bin.Left), Right = Rewrite(bin.Right) },
+            LikeExpr like => like with { Left = Rewrite(like.Left), Right = Rewrite(like.Right) },
             UnaryExpr unary => unary with { Operand = Rewrite(unary.Operand) },
             InExpr inn => inn with
             {
