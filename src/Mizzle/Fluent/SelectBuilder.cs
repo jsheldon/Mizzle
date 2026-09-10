@@ -86,12 +86,11 @@ public sealed class SelectBuilder
     /// </example>
     public SelectBuilder Select(params SelectItem[] items) => Copy(select: [..items]);
 
-    /// <summary>Groups the result by the given expressions.</summary>
+    /// <summary>
+    ///     Groups the result by the given expressions. A column converts to
+    ///     <c>Expr</c> implicitly, so it mixes freely with a computed expression.
+    /// </summary>
     public SelectBuilder GroupBy(params Expr[] expressions) => Copy(groupBy: [.._groupBy, ..expressions]);
-
-    /// <summary>Groups the result by the given columns.</summary>
-    public SelectBuilder GroupBy(params IColumn[] columns)
-        => Copy(groupBy: [.._groupBy, ..columns.Select(c => (Expr)c.ToRef())]);
 
     /// <summary>
     ///     Filters grouped rows. Repeated calls combine with <c>AND</c>, matching
@@ -113,7 +112,9 @@ public sealed class SelectBuilder
     public SelectBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
-    public SelectBuilder Where(IColumn column, object? value)
+    // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
+    // value no longer compiles instead of failing only at the database.
+    public SelectBuilder Where<T>(Column<T> column, T value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     /// <summary>
@@ -158,15 +159,13 @@ public sealed class SelectBuilder
 
     public JoinBuilder LeftJoin(ITable target) => new(this, JoinKind.Left, target.ToFrom());
 
+    // A column converts to Expr implicitly, so this one overload also covers a
+    // bare column -- a dedicated IColumn overload would now be ambiguous with it.
     public SelectBuilder OrderBy(Expr expr)
         => Copy(orderBy: [.._orderBy, new OrderByItem(expr, false)]);
 
-    public SelectBuilder OrderBy(IColumn column) => OrderBy(column.ToRef());
-
     public SelectBuilder OrderByDesc(Expr expr)
         => Copy(orderBy: [.._orderBy, new OrderByItem(expr, true)]);
-
-    public SelectBuilder OrderByDesc(IColumn column) => OrderByDesc(column.ToRef());
 
     public SelectBuilder Distinct() => Copy(distinct: true);
 

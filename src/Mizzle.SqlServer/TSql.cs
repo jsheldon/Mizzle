@@ -12,11 +12,11 @@ public static class TSql
     /// <summary>Current local date and time, as <c>GETDATE()</c>.</summary>
     public static CallExpr GetDate() => new("getdate", [], DialectKind.SqlServer);
 
-    /// <summary>Strips trailing whitespace, as <c>RTRIM(...)</c>.</summary>
+    /// <summary>
+    ///     Strips trailing whitespace, as <c>RTRIM(...)</c>. A column converts to
+    ///     <c>Expr</c> implicitly, so this also accepts a bare column.
+    /// </summary>
     public static CallExpr RTrim(Expr value) => new("rtrim", [value], DialectKind.SqlServer);
-
-    /// <summary>Strips trailing whitespace from a column.</summary>
-    public static CallExpr RTrim(IColumn column) => RTrim(column.ToRef());
 
     /// <summary>Strips leading whitespace, as <c>LTRIM(...)</c>.</summary>
     public static CallExpr LTrim(Expr value) => new("ltrim", [value], DialectKind.SqlServer);
@@ -29,12 +29,10 @@ public static class TSql
 
     /// <summary>
     ///     Converts <paramref name="value"/> to <paramref name="type"/>, as
-    ///     <c>CONVERT(varchar(20), ...)</c>. Nested calls compose.
+    ///     <c>CONVERT(varchar(20), ...)</c>. Nested calls compose. A column converts
+    ///     to <c>Expr</c> implicitly, so this also accepts a bare column.
     /// </summary>
     public static ConvertExpr Convert(SqlType type, Expr value) => new(TypeName(type), value);
-
-    /// <summary>Converts a column, as <c>CONVERT(int, [t].[col])</c>.</summary>
-    public static ConvertExpr Convert(SqlType type, IColumn column) => Convert(type, column.ToRef());
 
     /// <summary>
     ///     Converts with a T-SQL style code, as
@@ -43,10 +41,6 @@ public static class TSql
     /// </summary>
     public static ConvertExpr Convert(SqlType type, Expr value, int style)
         => new(TypeName(type), value, style);
-
-    /// <summary>Converts a column with a T-SQL style code.</summary>
-    public static ConvertExpr Convert(SqlType type, IColumn column, int style)
-        => Convert(type, column.ToRef(), style);
 
     // default(SqlType) has no name; emitting CONVERT(, x) would only surface as
     // a syntax error from the server.

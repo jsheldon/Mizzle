@@ -76,6 +76,34 @@ public sealed class CaseEmitterTests
         Assert.Throws<ArgumentException>(() => Sql.Case());
     }
 
+    // When(condition, 0) already accepts a bare literal; Else should not need
+    // Sql.Value(...) to say the same thing.
+    [Fact]
+    public void Else_accepts_a_bare_literal_like_When_does()
+    {
+        var v = new SqlVocab();
+        var sql = Compile(new SqlServerEmitter(), new SelectBuilder()
+            .Select(Sql.As(Sql.Case(Sql.When(v.TypeId.Eq(504m), 0)).Else(4), "pri"))
+            .From(v.ToFrom()));
+
+        Assert.Equal(
+            "SELECT CASE WHEN [revdel0].[type_id] = @p0 THEN @p1 ELSE @p2 END AS [pri] "
+            + "FROM [dbo].[revdel0] AS [revdel0]",
+            sql.Sql);
+        Assert.Equal<object?[]>([504m, 0, 4], [..sql.Parameters]);
+    }
+
+    [Fact]
+    public void Else_accepts_a_bare_string_literal()
+    {
+        var v = new SqlVocab();
+        var sql = Compile(new SqlServerEmitter(), new SelectBuilder()
+            .Select(Sql.As(Sql.Case(Sql.When(v.TypeId.Eq(7m), "seven")).Else("other"), "label"))
+            .From(v.ToFrom()));
+
+        Assert.Equal<object?[]>([7m, "seven", "other"], [..sql.Parameters]);
+    }
+
     // Sql.Value binds its argument, so handing it an expression would emit a
     // placeholder where the caller meant the expression's SQL.
     [Fact]

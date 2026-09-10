@@ -254,13 +254,19 @@ public sealed class ConvertBakeTests
         Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
     }
 
-    // A TSql function the baker does not know must drop the query to the runtime
-    // path, not bake its right side as a parameter that is never supplied.
+    // An expression the baker cannot render as a scalar position (Coalesce is not
+    // a column, a CONVERT, a TSql call, or a CASE) must drop the query to the
+    // runtime path, not bake its right side as a parameter that is never supplied.
+    // TSql.Len was originally used here, but every current TSql.* member is a
+    // recognized function (see TSqlFunctionNames) and now bakes -- this snippet
+    // did not actually compile before Column<T> converted to Expr, so the
+    // assertion below was previously passing for the wrong reason.
     [Fact]
     public void An_unrenderable_expr_right_side_does_not_bake()
     {
         var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, """
             using System.Threading.Tasks;
+            using Mizzle.Fluent;
             using Mizzle.SqlServer;
 
             namespace Demo;
@@ -274,7 +280,7 @@ public sealed class ConvertBakeTests
                     var p = new Products();
                     var rows = await db.Select(p.VocabId)
                         .From(p)
-                        .Where(p.VocabId.Gt(TSql.Convert(SqlType.Char(8), TSql.Len(p.VocabId))))
+                        .Where(p.VocabId.Gt(TSql.Convert(SqlType.Char(8), Sql.Coalesce(p.VocabId, p.VocabId))))
                         .ToListAsync<R>();
                 }
             }

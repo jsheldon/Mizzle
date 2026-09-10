@@ -46,13 +46,15 @@ public sealed class UpdateBuilder
 
     public QueryOptions? Overlay { get; }
 
-    public UpdateBuilder Set(IColumn column, object? value)
+    // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
+    // value no longer compiles instead of failing only at the database.
+    public UpdateBuilder Set<T>(Column<T> column, T value)
         => Copy(set: [.._set, (column.Name, (Expr)column.Bind(value))]);
 
     public UpdateBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
-    public UpdateBuilder Where(IColumn column, object? value)
+    public UpdateBuilder Where<T>(Column<T> column, T value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     /// <summary>

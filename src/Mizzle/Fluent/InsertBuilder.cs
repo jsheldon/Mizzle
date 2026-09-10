@@ -53,7 +53,9 @@ public sealed class InsertBuilder
 
     public QueryOptions? Overlay { get; }
 
-    public InsertBuilder Value(IColumn column, object? value)
+    // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
+    // value no longer compiles instead of failing only at the database.
+    public InsertBuilder Value<T>(Column<T> column, T value)
     {
         if (_fromSelect is not null)
         {

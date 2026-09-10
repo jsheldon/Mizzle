@@ -22,7 +22,8 @@ internal static class GeneratorTestHost
             [
                 new SchemaGenerator().AsSourceGenerator(),
                 new QueryInterceptorGenerator().AsSourceGenerator(),
-                new ProjectionGenerator().AsSourceGenerator()
+                new ProjectionGenerator().AsSourceGenerator(),
+                new CteTableGenerator().AsSourceGenerator()
             ],
             parseOptions: parseOptions,
             optionsProvider: new TestAnalyzerConfigOptionsProvider(null, trimStrings));
@@ -40,7 +41,8 @@ internal static class GeneratorTestHost
             [
                 new SchemaGenerator().AsSourceGenerator(),
                 new QueryInterceptorGenerator().AsSourceGenerator(),
-                new ProjectionGenerator().AsSourceGenerator()
+                new ProjectionGenerator().AsSourceGenerator(),
+                new CteTableGenerator().AsSourceGenerator()
             ],
             parseOptions: parseOptions,
             optionsProvider: new TestAnalyzerConfigOptionsProvider(null, trimStrings));

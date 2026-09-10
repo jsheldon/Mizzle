@@ -72,6 +72,14 @@ public sealed record CaseExpr(EquatableList<CaseWhen> Whens, Expr? Fallback = nu
 {
     /// <summary>Returns this CASE with an <c>ELSE</c> arm.</summary>
     public CaseExpr Else(Expr result) => this with { Fallback = result };
+
+    /// <summary>Returns this CASE with a literal <c>ELSE</c> arm.</summary>
+    // Constrained to a value type for the same reason Sql.When<T> is: an exact
+    // generic match must not out-rank Else(Expr) on an Expr-derived result.
+    public CaseExpr Else<T>(T result) where T : struct => Else(new ValueExpr(result, typeof(T)));
+
+    /// <summary>Returns this CASE with a literal string <c>ELSE</c> arm.</summary>
+    public CaseExpr Else(string result) => Else(new ValueExpr(result, typeof(string)));
 }
 
 // A ranking window function: ROW_NUMBER() OVER (PARTITION BY ... ORDER BY

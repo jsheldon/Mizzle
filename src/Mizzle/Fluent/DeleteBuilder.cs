@@ -47,7 +47,9 @@ public sealed class DeleteBuilder
     public DeleteBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 
-    public DeleteBuilder Where(IColumn column, object? value)
+    // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
+    // value no longer compiles instead of failing only at the database.
+    public DeleteBuilder Where<T>(Column<T> column, T value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
 
     /// <summary>

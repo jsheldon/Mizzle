@@ -129,6 +129,14 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
     public static implicit operator SelectItem(Column<T> column)
         => new(column.ToRef(), column.ProjectionName);
 
+    /// <summary>
+    ///     Lets a column appear anywhere an expression is expected, without an
+    ///     explicit <see cref="ToRef"/> -- e.g. mixing a plain column and a
+    ///     computed expression in the same call, such as a ranking function's
+    ///     <c>PartitionBy</c>/<c>OrderBy</c>.
+    /// </summary>
+    public static implicit operator Expr(Column<T> column) => column.ToRef();
+
     public ColumnRef ToRef()
         => new(TableAlias ?? Name, Name, typeof(T));
 

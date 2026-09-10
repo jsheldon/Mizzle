@@ -38,6 +38,12 @@ internal static class BakedChainWalker
         return WalkChain(terminatorMember.Expression, model, out hasReportedColumnError);
     }
 
+    // Resolves a CteBuilder.Named(name, body) call site's name and body shape --
+    // reused by CteTableGenerator so a generated CTE table has exactly the
+    // columns the same resolution already proves the body's SQL projects.
+    public static BakedCte? TryGetCte(ExpressionSyntax expression, SemanticModel model)
+        => new WalkState(model).ResolveCte(expression);
+
     private static readonly HashSet<string> WriteTerminators = new(StringComparer.Ordinal)
     {
         "ExecuteAsync",
@@ -142,7 +148,9 @@ internal static class BakedChainWalker
                     break;
                 case "Where" when args.Count == 2
                     && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
-                    && whereMethod.Parameters[0].Type.Name == "IColumn":
+                    // "Column" matches the generic Where<T>(Column<T>, T) overload;
+                    // "IColumn" is kept in case a non-generic overload ever returns.
+                    && whereMethod.Parameters[0].Type.Name is "IColumn" or "Column":
                     if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
                     {
                         return null;
@@ -314,7 +322,9 @@ internal static class BakedChainWalker
                     break;
                 case "Where" when args.Count == 2
                     && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
-                    && whereMethod.Parameters[0].Type.Name == "IColumn":
+                    // "Column" matches the generic Where<T>(Column<T>, T) overload;
+                    // "IColumn" is kept in case a non-generic overload ever returns.
+                    && whereMethod.Parameters[0].Type.Name is "IColumn" or "Column":
                     if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
                     {
                         return null;
@@ -566,6 +576,158 @@ internal static class BakedChainWalker
         return false;
     }
 
+    // Methods that never touch the select list, so a reassignment built only from
+    // these -- q = q.Where(...).OrderBy(...) -- cannot change the column shape a
+    // generated mapper was built from. Deliberately an allowlist, not a blocklist
+    // of "Select": a positive proof survives a future SelectBuilder method this
+    // list has not been told about, where a blocklist would silently admit it.
+    private static readonly HashSet<string> ProjectionPreservingMethods = new(StringComparer.Ordinal)
+    {
+        "GroupBy", "Having", "UnionAll", "From", "Where", "WhereIf", "Timeout",
+        "InnerJoin", "LeftJoin", "OrderBy", "OrderByDesc", "Distinct",
+        "With", "WithRecursive", "Limit", "Offset", "Page", "After"
+    };
+
+    // Resolves just the select-list shape behind a builder-valued local or field
+    // whose value is reassigned after declaration -- unlike ResolveBuilderLocal
+    // (which gives up entirely on any reassignment, because full SQL baking needs
+    // to see the chain's FINAL state), this only needs the declaration's own
+    // .Select(...) call, plus proof that every reassignment appends only
+    // projection-preserving calls. A reassignment that re-invokes Select could
+    // silently change the column list a generated mapper still trusts, so any
+    // reassignment this cannot prove safe fails the whole resolution.
+    public static IReadOnlyList<BakedColumn>? TryGetProjectionOnlySelect(
+        ExpressionSyntax builderExpression,
+        SemanticModel model)
+    {
+        if (builderExpression is not (IdentifierNameSyntax or MemberAccessExpressionSyntax)
+            || model.GetTypeInfo(builderExpression).Type?.ToDisplayString() != "Mizzle.Fluent.SelectBuilder")
+        {
+            return null;
+        }
+
+        var symbol = model.GetSymbolInfo(builderExpression).Symbol;
+        if (symbol is not (ILocalSymbol or IFieldSymbol))
+        {
+            return null;
+        }
+
+        var declaration = symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+        var initializer = declaration switch
+        {
+            VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+            PropertyDeclarationSyntax property => property.Initializer?.Value,
+            _ => null
+        };
+
+        if (initializer is not InvocationExpressionSyntax initializerChain
+            || declaration is null
+            || !EveryReassignmentPreservesProjection(symbol, declaration, model))
+        {
+            return null;
+        }
+
+        return ResolveSelectOnly(initializerChain, model);
+    }
+
+    private static bool EveryReassignmentPreservesProjection(ISymbol symbol, SyntaxNode declaration, SemanticModel model)
+    {
+        var scope = declaration.FirstAncestorOrSelf<MemberDeclarationSyntax>();
+        if (scope is null)
+        {
+            return false;
+        }
+
+        foreach (var assignment in scope.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+        {
+            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(assignment.Left).Symbol, symbol))
+            {
+                continue;
+            }
+
+            if (!IsProjectionPreservingChain(assignment.Right, symbol, model))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // q = q.Where(...).OrderBy(...): every call in the chain must be in the
+    // allowlist, and the chain must ultimately be rooted at a reference to the
+    // same symbol -- not some unrelated or freshly built query, which this
+    // resolution has no way to trace.
+    private static bool IsProjectionPreservingChain(ExpressionSyntax expression, ISymbol symbol, SemanticModel model)
+    {
+        var current = expression;
+        while (current is InvocationExpressionSyntax invocation)
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax member
+                || !ProjectionPreservingMethods.Contains(member.Name.Identifier.Text))
+            {
+                return false;
+            }
+
+            current = member.Expression;
+        }
+
+        return current is (IdentifierNameSyntax or MemberAccessExpressionSyntax)
+            && SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(current).Symbol, symbol);
+    }
+
+    // Walks just the declaration's own chain (a fresh db.Select(...)... chain that
+    // never itself crosses another local) to resolve the select list only -- the
+    // rest of the chain (From/Where/...) is not walked, because this resolution
+    // does not need it to bake anything.
+    private static IReadOnlyList<BakedColumn>? ResolveSelectOnly(ExpressionSyntax chain, SemanticModel model)
+    {
+        var calls = new List<(string Name, InvocationExpressionSyntax Invocation)>();
+        var current = chain;
+        while (current is InvocationExpressionSyntax invocation)
+        {
+            if (invocation.Expression is not MemberAccessExpressionSyntax member)
+            {
+                return null;
+            }
+
+            calls.Add((member.Name.Identifier.Text, invocation));
+            current = member.Expression;
+        }
+
+        var receiverType = model.GetTypeInfo(current).Type?.ToDisplayString();
+        if (receiverType is not ("Mizzle.Postgres.PostgresDb" or "Mizzle.SqlServer.SqlDb"))
+        {
+            return null;
+        }
+
+        calls.Reverse();
+        if (calls.Count == 0 || calls[0].Name != "Select")
+        {
+            return null;
+        }
+
+        var args = calls[0].Invocation.ArgumentList.Arguments;
+        if (args.Count == 0)
+        {
+            return null;
+        }
+
+        var state = new WalkState(model);
+        foreach (var arg in args)
+        {
+            var item = state.ResolveColumn(arg.Expression) ?? state.ResolveSelectExpression(arg.Expression);
+            if (item is null)
+            {
+                return null;
+            }
+
+            state.Select.Add(item);
+        }
+
+        return state.Select;
+    }
+
     private sealed class WalkState
     {
         private readonly SemanticModel _model;
@@ -731,10 +893,29 @@ internal static class BakedChainWalker
                 expression = asArgs[0].Expression;
             }
 
+            // ROW_NUMBER() is a well-defined bigint-returning function on both
+            // dialects and is guaranteed never NULL, unlike CASE/CONVERT/TSql
+            // calls (below) whose result type and nullability depend on their
+            // arguments -- so it is the one computed expression that gets a real
+            // CLR type instead of the generic "object" placeholder. This also
+            // matters for a generated CTE table (CteTableGenerator), which has no
+            // target record to fall back on for typing a computed column.
+            if (ResolveRowNumberSql(expression) is { } rowNumberSql)
+            {
+                if (requireAlias && alias is null)
+                {
+                    return null;
+                }
+
+                return new BakedColumn(
+                    "", "", alias ?? "", "long", isRequired: true, "GetInt64",
+                    projectionName: alias,
+                    sqlExpression: rowNumberSql);
+            }
+
             if ((ResolveConvertSql(expression)
                  ?? ResolveTSqlCallSql(expression)
-                 ?? ResolveCaseSql(expression)
-                 ?? ResolveRowNumberSql(expression)) is { } convertSql)
+                 ?? ResolveCaseSql(expression)) is { } convertSql)
             {
                 if (requireAlias && alias is null)
                 {

@@ -9,8 +9,11 @@
 Fluent, type-safe SQL for .NET, inspired by [Drizzle ORM](https://orm.drizzle.team/).
 
 Declare your schema in C#, build queries against typed columns, and let Mizzle
-emit SQL for PostgreSQL or SQL Server. It does not use raw SQL strings, LINQ
-translation, or reflection in the query path.
+emit SQL for PostgreSQL or SQL Server. It does not use raw SQL strings or LINQ
+translation. Statically-visible queries skip reflection entirely by baking
+SQL and a projection mapper at build time; runtime-mapped paths (an
+untraceable dynamic `SelectBuilder`, or a write's `Returning(...)`
+projection) map into `T` by reflection instead.
 
 > **Status: experimental.** This is an early alpha. The API will change between releases. PostgreSQL and SQL Server are the only supported databases.
 
@@ -99,6 +102,34 @@ await db.Transaction(async tx =>
     // Queries here run on the transaction connection.
     // Nested Transaction calls become savepoints.
 });
+```
+
+SQL Server tables and registration look the same, just with `SqlTable<T>` and
+`AddMizzleSqlServer`:
+
+```csharp
+using Mizzle.SqlServer;
+
+public sealed class Users : SqlTable<Users>
+{
+    public Users() : base("Users", "dbo") { }
+
+    public SqlColumn<int> Id { get; } = Identity("Id").PrimaryKey();
+    public SqlColumn<string> Email { get; } = NVarChar("Email", 256).NotNull().Unique();
+    public SqlColumn<bool> IsActive { get; } = Bit("IsActive").NotNull();
+}
+```
+
+```csharp
+services.AddMizzleSqlServer(connectionString);
+```
+
+```csharp
+var users = new Users();
+var found = await db.Select(users.Id, users.Email)
+    .From(users)
+    .Where(users.Email.Eq("a@b.com"))
+    .ToListAsync<UserRow>();
 ```
 
 Joins keep the same style. Conditions are typed, and chained `Where` calls are
@@ -212,9 +243,14 @@ var rows = await db.Select(users.Id, users.Email)
     .ToListAsync(r => new UserRow(r.GetInt32(0), r.GetString(1)));
 ```
 
-The delegate-free typed terminators need a statically visible query chain so
-the source generator can intercept the call. If you pass around a dynamic
-`SelectBuilder`, use the delegate overload.
+The delegate-free typed terminators need the query's *projection* to be
+statically visible, even when the SQL itself can't be baked. A chain built by
+reassigning a local -- adding `Where`, `OrderBy`, paging, and the like -- still
+gets a generated mapper; only building a genuinely different projection (a
+new or additional `Select`) breaks that link. An unsupported call reports
+`MIZ014` rather than silently falling back, in Strict mode or not. If you
+pass around a dynamic `SelectBuilder` in a way the generator can't trace at
+all, use the delegate overload.
 
 ## Reusing Tables
 
@@ -263,40 +299,38 @@ public SqlColumn<string> Signature { get; } = VarChar("signature", 500).Untrimme
 update or delete:
 
 ```csharp
-var stale = db.Select(o.OrderId).From(o).Where(o.Status.Eq("abandoned")).Build();
-
-await db.DeleteFrom(o)
-    .With(CteBuilder.Named("stale", stale))
+var body = db.Select(o.OrderId, o.Ndc)
+    .From(o)
     .Where(o.Status.Eq("abandoned"))
-    .ExecuteAsync(ct);
+    .Build();
+
+var stale = CteBuilder.Named<StaleOrders>("stale", body);
+var s = new StaleOrders();
+
+var rows = await db.Select(s.OrderId, s.Ndc)
+    .With(stale)
+    .From(s)
+    .ToListAsync<StaleOrderRow>();
 ```
+
+`CteBuilder.Named<T>` declares `T` as a table type from the CTE body's own
+select list -- one typed column per projected column, matched to the body's
+real SQL names and types. `StaleOrders` above needs no hand-written schema;
+the source generator produces it from `stale`'s shape, so it can't drift out
+of sync with the query that defines it. From there the CTE behaves like any
+other table: typed columns, `As(...)`, left-join nullability, and the
+projection diagnostics.
 
 A CTE whose body is a statically visible chain is baked along with the outer
 query, so CTE queries stay on the interceptor path instead of falling back to
 runtime compilation.
 
-To join a CTE with typed columns, declare its shape as a table whose name is the
-CTE name and whose schema is omitted:
-
-```csharp
-public sealed class RxNorm : PgTable<RxNorm>
-{
-    public RxNorm() : base("rxnorm") { }
-    public PgColumn<string> Ndc { get; } = Text("ndc").NotNull();
-    public PgColumn<string> Code { get; } = Text("code").NotNull();
-}
-
-var rows = await db.Select(o.OrderId, rx.Code.As("Code"))
-    .With(CteBuilder.Named("rxnorm", body))
-    .From(o)
-    .LeftJoin(rx).On(o.Ndc.Eq(rx.Ndc))
-    .ToListAsync<OrderCode>();
-```
-
-The CTE then behaves like any other table: typed columns, `As(...)`, left-join
-nullability, and the projection diagnostics. Note that nothing checks the
-declared columns against the CTE body's select list -- a mismatch surfaces at the
-database, not at build time.
+If you already have a hand-declared table type for a CTE shape -- one shared
+across several queries, say -- `CteBuilder.Named("name", body)` also accepts a
+plain string and skips generation. Nothing then checks the declared columns
+against the body's select list, so a mismatch surfaces at the database
+instead of at build time; prefer the generic overload unless you have a
+specific reason to hand-declare.
 
 ## Ranking within a partition
 
@@ -306,26 +340,25 @@ query shape -- combine it with a CTE and a second, typed CTE that filters the
 rank column, same as any other computed column:
 
 ```csharp
-public sealed class Ranked : PgTable<Ranked>
-{
-    public Ranked() : base("ranked") { }
-    public PgColumn<string> Ndc { get; } = Text("ndc").NotNull();
-    public PgColumn<int> Rn { get; } = Integer("rn").NotNull();
-}
-
-var ranked = db.Select(
+var body = db.Select(
         o.Ndc,
         Sql.As(Sql.RowNumber().PartitionBy(o.Ndc).OrderByDesc(o.EffectiveDate), "rn"))
     .From(o)
     .Build();
 
-var best = new Ranked();
-var rows = await db.Select(best.Ndc)
-    .With(CteBuilder.Named("ranked", ranked))
-    .From(best)
-    .Where(best.Rn.Eq(1))
+var ranked = CteBuilder.Named<Ranked>("ranked", body);
+var r = new Ranked();
+
+var rows = await db.Select(r.Ndc)
+    .With(ranked)
+    .From(r)
+    .Where(r.rn.Eq(1))
     .ToListAsync<BestNdc>();
 ```
+
+`Ranked` needs no hand-declared schema -- `CteBuilder.Named<T>` generates it
+from `body`'s shape, including the computed `rn` column's real SQL type
+(`bigint`/`long`, matching what `ROW_NUMBER()` actually returns).
 
 `PartitionBy`/`OrderBy`/`OrderByDesc` take either a plain column or a computed
 expression (`Sql.Case(...)`, `TSql.RTrim(...)`, ...); mixing both kinds in one

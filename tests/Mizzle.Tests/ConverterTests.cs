@@ -114,8 +114,14 @@ public sealed class ConverterTests
     [Fact]
     public void Null_values_bind_as_null_without_converting()
     {
+        // Where<T> is now generic over the column's own (non-nullable, Guid) type,
+        // so it can no longer accept a literal null -- same constraint Eq(T) already
+        // has. Null-binding is a Bind(object?) concern, independent of T, so this
+        // goes straight to Bind to keep testing that specifically.
         var t = new LegacyPersons();
-        var q = new SelectBuilder().Select(t.FirstName).From(t).Where(t.PersonId, null).Build();
+        var q = new SelectBuilder().Select(t.FirstName).From(t)
+            .Where(new BinaryExpr(BinaryOp.Eq, t.PersonId.ToRef(), t.PersonId.Bind(null)))
+            .Build();
         Assert.Equal([null], Parameterizer.Run(q).Values);
     }
 }

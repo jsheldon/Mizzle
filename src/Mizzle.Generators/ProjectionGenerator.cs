@@ -71,10 +71,27 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
 
+    // Bound T (an existing type) on a chain the generator cannot statically resolve
+    // falls back to the delegate-free runtime stub, which throws when it executes.
+    // Warning, not Error: unlike MIZ007 (nothing to generate at all), this call site
+    // compiles and can genuinely be intended to run dynamically -- the same shape
+    // MIZ002 already hard-fails in Strict mode. This is Hybrid mode's version of
+    // that signal, so an ordinary refactor into a dynamic chain does not silently
+    // turn into a runtime-only failure.
+    internal static readonly DiagnosticDescriptor NotStaticallyVisibleBoundType = new(
+        "MIZ014",
+        "Query shape not statically visible for typed terminator",
+        "'{0}' cannot be statically resolved for this call site and will throw at runtime; "
+        + "restructure the chain so it can be intercepted, or call the delegate-based overload explicitly",
+        "Mizzle",
+        DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+
     private static readonly Dictionary<string, DiagnosticDescriptor> Descriptors = new()
     {
         ["MIZ010"] = MemberTypeMismatch,
         ["MIZ011"] = DuplicateTableAlias,
+        ["MIZ014"] = NotStaticallyVisibleBoundType,
         ["MIZ003"] = NoTargetMember,
         ["MIZ004"] = RequiredMemberUnfilled,
         ["MIZ005"] = NullableIntoNonNullable,
@@ -174,13 +191,57 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             : string.Join("", variants.Select(v => v.Mask + ":" + v.Sql));
         if (spec is null || sql is null)
         {
-            // Only unbound T deserves MIZ007. A bound T on a dynamic chain
-            // simply falls back to the runtime stub (and MIZ002 under Strict).
             // A table whose column already reported MIZ008/MIZ009 is silent
             // either way: that diagnostic points at the real line.
-            return bound is null && !hasReportedColumnError
-                ? new ProjectionSite(typeName, ns, terminator, null, null, null, null, null, [("MIZ007", [typeName])], invocation.GetLocation())
-                : null;
+            if (hasReportedColumnError)
+            {
+                return null;
+            }
+
+            // The whole chain does not bake, but a bound T on one of the terminators
+            // with a delegate-based overload might still get a real mapper: if the
+            // declaration's own .Select(...) resolves and every reassignment provably
+            // preserves the projection, forward to that overload instead of leaving
+            // a delegate-free runtime throw. See TryGetProjectionOnlySelect.
+            if (bound is not null && DelegateTerminatorMethods.ContainsKey(terminator))
+            {
+                var dynamicSelect = BakedChainWalker.TryGetProjectionOnlySelect(member.Expression, model);
+                if (dynamicSelect is not null)
+                {
+                    var dynamicErrors = new List<(string Id, string[] Args)>();
+                    var dynamicMapperPlan = BuildMapPlan(bound, dynamicSelect, model.Compilation, dynamicErrors);
+                    if (dynamicErrors.Count > 0)
+                    {
+                        return new ProjectionSite(
+                            typeName, ns, terminator, null, null, null, null, null, dynamicErrors, invocation.GetLocation());
+                    }
+
+#pragma warning disable RSEXPERIMENTAL002
+                    var dynamicLocation = model.GetInterceptableLocation(invocation);
+#pragma warning restore RSEXPERIMENTAL002
+                    if (dynamicLocation is null)
+                    {
+                        return null;
+                    }
+
+                    var shapeKey = string.Join("|", dynamicSelect.Select(c =>
+                        $"{c.TableAlias}.{c.DbName}#{c.MemberName}#{c.ClrTypeName}#{c.IsRequired}#{c.ReaderCall}#{c.SqlExpression}#{c.IsLiteral}"));
+#pragma warning disable RSEXPERIMENTAL002
+                    var dynamicAttribute = dynamicLocation.GetInterceptsLocationAttributeSyntax();
+#pragma warning restore RSEXPERIMENTAL002
+                    return new ProjectionSite(
+                        typeName, ns, terminator, null, null, null, dynamicAttribute, dynamicMapperPlan, [],
+                        invocation.GetLocation(), dynamicSelect, shapeKey);
+                }
+            }
+
+            // Unbound T has nothing to generate a projection type from at all (MIZ007).
+            // Bound T still compiles and can genuinely be intended to run dynamically,
+            // so it gets a warning (MIZ014) instead of silence -- see NotStaticallyVisibleBoundType.
+            var (id, args) = bound is null
+                ? ("MIZ007", new[] { typeName })
+                : ("MIZ014", new[] { typeName });
+            return new ProjectionSite(typeName, ns, terminator, null, null, null, null, null, [(id, args)], invocation.GetLocation());
         }
 
         MapperPlan? mapperPlan = null;
@@ -486,7 +547,10 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             }
         }
 
-        var valid = sites.Where(s => s.Sql is not null && s.Errors.Count == 0).ToList();
+        // A dynamic (unbaked) mapper site has Sql == null by design -- it forwards to
+        // the delegate-based overload instead of a literal SQL string -- so it is
+        // admitted here by MapperPlan instead.
+        var valid = sites.Where(s => (s.Sql is not null || s.MapperPlan is not null) && s.Errors.Count == 0).ToList();
         if (valid.Count == 0)
         {
             return;
@@ -535,9 +599,12 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 $"new {fq}({string.Join(", ", spec.Select.Select((c, i) => ReadCall(c, i, trimStrings)))})");
         }
 
-        // Map mode: one mapper per distinct (namespace, type, sql, terminator).
+        // Map mode: one mapper per distinct (namespace, type, sql-or-shape, terminator).
+        // A dynamic site's Sql is always null, so its DynamicShapeKey stands in as the
+        // sharing key instead -- otherwise two unrelated dynamic queries returning the
+        // same T would wrongly collapse onto one generated mapper.
         var mapped = valid.Where(s => s.MapperPlan is not null)
-            .GroupBy(s => (s.Namespace, s.TypeName, s.Sql, s.Terminator))
+            .GroupBy(s => (s.Namespace, s.TypeName, Key: s.Sql ?? s.DynamicShapeKey, s.Terminator))
             .Select((g, i) => (Group: g, Name: $"{g.Key.TypeName}IntoMapper{i}"))
             .ToList();
         foreach (var (group, name) in mapped)
@@ -545,7 +612,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             var first = group.First();
             // The target's real namespace, not the call site's -- a bound T is
             // routinely declared in another assembly or layer.
-            EmitMapper(sb, name, first.MapperPlan!.TargetFq, MapperBody(first.MapperPlan!, first.Spec!.Select, trimStrings));
+            EmitMapper(sb, name, first.MapperPlan!.TargetFq, MapperBody(first.MapperPlan!, first.MapperSelect!, trimStrings));
         }
 
         sb.AppendLine("}");
@@ -556,8 +623,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         sb.AppendLine("    {");
         var interceptorGroups = generated
             .SelectMany(g => g.GroupBy(s => (s.Sql, s.Terminator)).Select(bySql =>
-                (Sites: bySql.AsEnumerable(), Mapper: GeneratedMapperName(g.Key.TypeName), Variants: bySql.First().Variants!, Terminator: bySql.Key.Terminator)))
-            .Concat(mapped.Select(m => (Sites: m.Group.AsEnumerable(), Mapper: m.Name, Variants: m.Group.First().Variants!, Terminator: m.Group.Key.Terminator)))
+                (Sites: bySql.AsEnumerable(), Mapper: GeneratedMapperName(g.Key.TypeName), Variants: bySql.First().Variants!, Terminator: bySql.Key.Terminator, Dynamic: false)))
+            .Concat(mapped.Select(m => (Sites: m.Group.AsEnumerable(), Mapper: m.Name, Variants: m.Group.First().Variants!, Terminator: m.Group.Key.Terminator, Dynamic: m.Group.First().Sql is null)))
             .ToList();
         for (var i = 0; i < interceptorGroups.Count; i++)
         {
@@ -566,7 +633,7 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
                 sb.AppendLine();
             }
 
-            EmitInterceptor(sb, i, interceptorGroups[i].Terminator, interceptorGroups[i].Mapper, interceptorGroups[i].Variants, interceptorGroups[i].Sites.Select(s => s.Attribute!).Distinct());
+            EmitInterceptor(sb, i, interceptorGroups[i].Terminator, interceptorGroups[i].Mapper, interceptorGroups[i].Variants, interceptorGroups[i].Sites.Select(s => s.Attribute!).Distinct(), interceptorGroups[i].Dynamic);
         }
 
         sb.AppendLine("    }");
@@ -575,7 +642,23 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         context.AddSource("Mizzle.Projections.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
-    private static void EmitInterceptor(StringBuilder sb, int index, string terminator, string mapper, List<(ulong Mask, string Sql)> variants, IEnumerable<string> attributes)
+    private static readonly Dictionary<string, string> DelegateTerminatorMethods = new(StringComparer.Ordinal)
+    {
+        ["ToList"] = "ToListAsync",
+        ["First"] = "FirstAsync",
+        ["FirstOrDefault"] = "FirstOrDefaultAsync",
+        ["Single"] = "SingleAsync",
+        ["SingleOrDefault"] = "SingleOrDefaultAsync",
+    };
+
+    private static void EmitInterceptor(
+        StringBuilder sb,
+        int index,
+        string terminator,
+        string mapper,
+        List<(ulong Mask, string Sql)> variants,
+        IEnumerable<string> attributes,
+        bool dynamic)
     {
         const string listOfT = "global::System.Collections.Generic.IReadOnlyList<T>";
         var returnType = terminator switch
@@ -606,6 +689,36 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
 
         sb.AppendLine("            global::System.Threading.CancellationToken cancellationToken = default)");
         sb.AppendLine("        {");
+
+        // Dynamic (unbaked) mapper: no SQL text was ever resolved, so this forwards
+        // to the delegate-based overload -- Build() still runs at runtime against
+        // whatever the chain's final state is -- with the generated mapper standing
+        // in for the delegate a caller would otherwise have to hand-write. The
+        // delegate overload infers its own T from the mapper's return type, which
+        // the compiler cannot see as identical to this method's T, hence the same
+        // (T)(object) cast the baked path below uses.
+        if (dynamic)
+        {
+            var call = $"await builder.{DelegateTerminatorMethods[terminator]}(global::Mizzle.Generated.Projections.{mapper}.Read, cancellationToken)";
+            switch (terminator)
+            {
+                case "ToList":
+                    sb.Append("            var rows = ").Append(call).AppendLine(";");
+                    sb.AppendLine("            return (global::System.Collections.Generic.IReadOnlyList<T>)(object)rows;");
+                    break;
+                case "First":
+                case "Single":
+                    sb.Append("            return (T)(object)(").Append(call).AppendLine(")!;");
+                    break;
+                default:
+                    sb.Append("            return (T?)(object?)(").Append(call).AppendLine(");");
+                    break;
+            }
+
+            sb.AppendLine("        }");
+            return;
+        }
+
         if (variants.Count == 1)
         {
             sb.Append("            var sql = ");
@@ -753,7 +866,9 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             string? attribute,
             MapperPlan? mapperPlan,
             List<(string Id, string[] Args)> errors,
-            Location location)
+            Location location,
+            IReadOnlyList<BakedColumn>? mapperSelect = null,
+            string? dynamicShapeKey = null)
         {
             TypeName = typeName;
             Namespace = ns;
@@ -765,6 +880,8 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
             MapperPlan = mapperPlan;
             Errors = errors;
             Location = location;
+            MapperSelect = mapperSelect ?? spec?.Select;
+            DynamicShapeKey = dynamicShapeKey;
         }
 
         public string TypeName { get; }
@@ -777,5 +894,15 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
         public MapperPlan? MapperPlan { get; }
         public List<(string Id, string[] Args)> Errors { get; }
         public Location Location { get; }
+
+        // The column list MapperBody reads from: spec.Select when this site baked,
+        // or the declaration-only select list a dynamic (unbaked) mapper resolved.
+        public IReadOnlyList<BakedColumn>? MapperSelect { get; }
+
+        // Non-null only for a dynamic (unbaked) mapper site: Sql cannot serve as
+        // the sharing key there (it is always null), so this carries a signature
+        // of the resolved select list instead, keeping distinct shapes from being
+        // merged onto one generated mapper just because they share a target type.
+        public string? DynamicShapeKey { get; }
     }
 }

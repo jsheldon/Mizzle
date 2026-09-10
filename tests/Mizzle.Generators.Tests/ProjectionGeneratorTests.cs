@@ -328,6 +328,28 @@ public sealed class ProjectionGeneratorTests
     }
 
     [Fact]
+    public void Bound_type_on_dynamic_chain_reports_MIZ014_as_a_warning()
+    {
+        const string site = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+
+            namespace Demo;
+
+            public record AuthorRow(System.Guid AuthorId, string DisplayName);
+
+            public static class Q
+            {
+                public static Task<System.Collections.Generic.IReadOnlyList<AuthorRow>> Run(SelectBuilder prebuilt)
+                    => prebuilt.ToListAsync<AuthorRow>();
+            }
+            """;
+        var result = GeneratorTestHost.Run(Tables, site);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Id == "MIZ007");
+    }
+
+    [Fact]
     public void Column_error_suppresses_follow_on_MIZ007()
     {
         const string tables = """
@@ -604,8 +626,10 @@ public sealed class ProjectionGeneratorTests
             """;
 
         var result = GeneratorTestHost.Run(AliasTables, callSite);
-        // Bound T on an unbakeable chain: silent fallback, no interceptor.
-        Assert.Empty(result.Diagnostics);
+        // Bound T on an unbakeable chain: no interceptor, but now a MIZ014 warning
+        // instead of silence.
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain("DynRowIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
 
@@ -1119,7 +1143,8 @@ public sealed class ProjectionGeneratorTests
             """;
 
         var result = GeneratorTestHost.Run(LookupTables, callSite);
-        Assert.Empty(result.Diagnostics);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain("DynRow2IntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
 
@@ -1363,7 +1388,8 @@ public sealed class ProjectionGeneratorTests
             """;
 
         var result = GeneratorTestHost.Run(CteTables, callSite);
-        Assert.Empty(result.Diagnostics);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain("DynCteRowIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
 }

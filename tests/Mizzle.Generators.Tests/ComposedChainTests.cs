@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis;
+
 namespace Mizzle.Generators.Tests;
 
 // Real readers build queries across statements. A chain that starts from a
@@ -56,11 +58,16 @@ public sealed class ComposedChainTests
     public void A_reassigned_local_does_not_bake()
     {
         // Following the declaration alone would bake SQL without the extra Where.
-        Assert.False(Bakes("""
+        // Bakes() now also matches the dynamic-mapper mapper class (see
+        // A_reassigned_local_that_only_adds_a_where_still_gets_a_generated_mapper),
+        // so the precise invariant this test documents is "never a literal SQL
+        // string", not "nothing is generated at all".
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, Case("""
             var q = db.Select(p.PersonId).From(p);
             if (flag) q = q.Where(p.Status.Eq("open"));
             var rows = await q.ToListAsync<Row>();
-            """));
+            """)));
+        Assert.DoesNotContain("ToListPrecompiledAsync", generated, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -72,5 +79,52 @@ public sealed class ComposedChainTests
             var body = a.UnionAll(b).Build();
             var rows = await db.Select(p.PersonId).With(CteBuilder.Named("both", body)).From(p).ToListAsync<Row>();
             """));
+    }
+
+    // A reassigned local cannot bake SQL, but the reassignment only adds a Where --
+    // it never touches the select list -- so the generator can still emit a typed
+    // mapper and forward to the delegate-based overload for dynamic execution,
+    // rather than leaving the caller with the delegate-free runtime throw.
+    [Fact]
+    public void A_reassigned_local_that_only_adds_a_where_still_gets_a_generated_mapper()
+    {
+        var generated = GeneratorTestHost.Generated(GeneratorTestHost.Run(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var rows = await q.ToListAsync<Row>();
+            """)));
+
+        Assert.Contains("RowIntoMapper", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("ToListPrecompiledAsync", generated, StringComparison.Ordinal);
+        Assert.Contains(".ToListAsync(global::Mizzle.Generated.Projections.", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_reassigned_local_that_only_adds_a_where_compiles_cleanly()
+    {
+        var (_, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p);
+            if (flag) q = q.Where(p.Status.Eq("open"));
+            var rows = await q.ToListAsync<Row>();
+            """));
+
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+    }
+
+    // Same reassignment shape, but the reassignment re-invokes Select itself --
+    // the column list it would produce is not provably the same as the
+    // declaration's, so this must stay a plain runtime throw (MIZ014), not a
+    // mapper built from a select list that might no longer match.
+    [Fact]
+    public void A_reassignment_that_re_selects_does_not_get_a_generated_mapper()
+    {
+        var result = GeneratorTestHost.Run(Tables, Case("""
+            var q = db.Select(p.PersonId).From(p);
+            if (flag) q = q.Select(p.PersonId, p.Status).From(p);
+            var rows = await q.ToListAsync<Row>();
+            """));
+
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014");
+        Assert.DoesNotContain("RowIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
 }

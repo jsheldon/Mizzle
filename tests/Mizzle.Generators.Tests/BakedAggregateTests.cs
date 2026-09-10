@@ -158,9 +158,11 @@ public sealed class BakedAggregateTests
             }
             """;
 
-        // Nothing names the aggregate, so there is no member to bind it to.
+        // Nothing names the aggregate, so there is no member to bind it to; that now
+        // surfaces as MIZ014 instead of compiling silently into a runtime throw.
         var result = GeneratorTestHost.Run(Tables, callSite);
-        Assert.Empty(result.Diagnostics);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain("BareCountIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
     }
 }

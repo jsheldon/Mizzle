@@ -10,9 +10,10 @@ namespace Mizzle.Fluent;
 public static class Sql
 {
     /// <summary>An equality comparison.</summary>
+    // A bare column implicitly converts to Expr (Column<T>'s operator), so this
+    // one overload also covers Eq(IColumn, IColumn) -- a dedicated overload would
+    // now be ambiguous with this one, not just redundant.
     public static BinaryExpr Eq(Expr left, Expr right) => new(BinaryOp.Eq, left, right);
-
-    public static BinaryExpr Eq(IColumn left, IColumn right) => new(BinaryOp.Eq, left.ToRef(), right.ToRef());
 
     public static BinaryExpr Eq(ColumnRef column, object? value)
         => new(BinaryOp.Eq, column, new ValueExpr(value, column.ClrType));
@@ -73,7 +74,7 @@ public static class Sql
 
     /// <summary>
     ///     A searched <c>CASE</c>. Arms are tested in order; chain
-    ///     <see cref="CaseExpr.Else"/> for the fallback, or leave it off to get
+    ///     <see cref="CaseExpr.Else(Expr)"/> for the fallback, or leave it off to get
     ///     <c>NULL</c> when nothing matches.
     /// </summary>
     /// <example><code>Sql.Case(Sql.When(c.Kind.Eq(504m), 0)).Else(Sql.Value(4))</code></example>
@@ -85,23 +86,11 @@ public static class Sql
     /// <summary>
     ///     A ranking window function: <c>ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)</c>.
     ///     Chain <see cref="RowNumberExpr.PartitionBy"/> and
-    ///     <see cref="RowNumberExpr.OrderBy"/>/<see cref="RowNumberExpr.OrderByDesc"/>; mixing a
-    ///     plain column with a computed expression in the same call needs an explicit
-    ///     <c>.ToRef()</c> on the column.
+    ///     <see cref="RowNumberExpr.OrderBy"/>/<see cref="RowNumberExpr.OrderByDesc"/> -- a
+    ///     plain column converts to <c>Expr</c> implicitly, so it mixes freely with a
+    ///     computed expression in the same call.
     /// </summary>
     public static RowNumberExpr RowNumber() => new([], []);
-
-    /// <summary>Partitions a <see cref="RowNumberExpr"/> by one or more plain columns.</summary>
-    public static RowNumberExpr PartitionBy(this RowNumberExpr rowNumber, params IColumn[] columns)
-        => rowNumber.PartitionBy([..columns.Select(c => c.ToRef())]);
-
-    /// <summary>Orders a <see cref="RowNumberExpr"/> by a plain column, ascending.</summary>
-    public static RowNumberExpr OrderBy(this RowNumberExpr rowNumber, IColumn column)
-        => rowNumber.OrderBy(column.ToRef());
-
-    /// <summary>Orders a <see cref="RowNumberExpr"/> by a plain column, descending.</summary>
-    public static RowNumberExpr OrderByDesc(this RowNumberExpr rowNumber, IColumn column)
-        => rowNumber.OrderByDesc(column.ToRef());
 
     /// <summary>A <c>BETWEEN</c> range test, inclusive of both bounds.</summary>
     public static BetweenExpr Between(Expr value, Expr lo, Expr hi) => new(value, lo, hi);
@@ -112,31 +101,22 @@ public static class Sql
     /// <summary>A <c>COUNT</c> aggregate.</summary>
     public static AggregateExpr Count() => new(AggregateKind.Count, null);
 
-    /// <summary>A <c>SUM</c> aggregate.</summary>
+    /// <summary>A <c>SUM</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
     public static AggregateExpr Sum(Expr arg) => new(AggregateKind.Sum, arg);
 
-    /// <summary>A <c>SUM</c> aggregate over a column.</summary>
-    public static AggregateExpr Sum(IColumn column) => Sum(column.ToRef());
-
-    /// <summary>An <c>AVG</c> aggregate.</summary>
+    /// <summary>An <c>AVG</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
     public static AggregateExpr Avg(Expr arg) => new(AggregateKind.Avg, arg);
 
-    /// <summary>An <c>AVG</c> aggregate over a column.</summary>
-    public static AggregateExpr Avg(IColumn column) => Avg(column.ToRef());
-
-    /// <summary>A <c>MIN</c> aggregate.</summary>
+    /// <summary>A <c>MIN</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
     public static AggregateExpr Min(Expr arg) => new(AggregateKind.Min, arg);
 
-    /// <summary>A <c>MIN</c> aggregate over a column.</summary>
-    public static AggregateExpr Min(IColumn column) => Min(column.ToRef());
-
-    /// <summary>A <c>MAX</c> aggregate.</summary>
+    /// <summary>A <c>MAX</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
     public static AggregateExpr Max(Expr arg) => new(AggregateKind.Max, arg);
 
-    /// <summary>A <c>MAX</c> aggregate over a column.</summary>
-    public static AggregateExpr Max(IColumn column) => Max(column.ToRef());
-
-    /// <summary>Names an expression in a select list.</summary>
+    /// <summary>
+    ///     Names an expression -- or a column, which converts to <c>Expr</c>
+    ///     implicitly -- in a select list.
+    /// </summary>
     /// <example><code>Sql.As(Sql.Count(), "Orders")</code></example>
     public static SelectItem As(Expr expr, string alias) => new(expr, alias);
 
