@@ -1192,11 +1192,11 @@ internal static class BakedChainWalker
             return inner is null ? null : function + "(" + inner + ")";
         }
 
-        // A scalar position: a column, a CONVERT, or a TSql function over one.
+        // A scalar position: a column, a CONVERT, a TSql function over one, or a CASE.
         private string? ResolveScalarSql(ExpressionSyntax expression)
             => ResolveColumn(expression) is { } column
                 ? Quote(column.TableAlias) + "." + Quote(column.DbName)
-                : ResolveConvertSql(expression) ?? ResolveTSqlCallSql(expression);
+                : ResolveConvertSql(expression) ?? ResolveTSqlCallSql(expression) ?? ResolveCaseSql(expression);
 
         // An Expr held in a local or field -- var key = TSql.Convert(...) -- so a
         // join key used in two places can be written once. Reassignment disqualifies

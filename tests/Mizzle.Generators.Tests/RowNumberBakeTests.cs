@@ -124,6 +124,41 @@ public sealed class RowNumberBakeTests
     }
 
     [Fact]
+    public void RowNumber_accepts_a_Case_expression_in_PartitionBy_and_OrderBy()
+    {
+        var v = new Vocab();
+        var typeCase = Sql.Case(Sql.When(v.TypeId.Eq(1m), 0)).Else(1);
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(v.VocabId, Sql.As(Sql.RowNumber().PartitionBy(typeCase).OrderBy(typeCase), "rn"))
+            .From(v.ToFrom()));
+
+        var baked = BakedSql("""
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            public record RankedRow(string VocabId, int Rn);
+
+            public static class CaseRankedQ
+            {
+                public static async Task Run(SqlDb db)
+                {
+                    var v = new Vocab();
+                    var typeCase = Sql.Case(Sql.When(v.TypeId.Eq(1m), 0)).Else(1);
+                    var rows = await db.Select(v.VocabId, Sql.As(Sql.RowNumber().PartitionBy(typeCase).OrderBy(typeCase), "rn"))
+                        .From(v)
+                        .ToListAsync<RankedRow>();
+                }
+            }
+            """);
+
+        Assert.Contains("ROW_NUMBER() OVER (PARTITION BY CASE", baked, StringComparison.Ordinal);
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
     public void RowNumber_over_an_unresolvable_expression_does_not_bake()
     {
         // Sql.Coalesce is a valid runtime expression but is not one of the
