@@ -24,7 +24,12 @@ internal static class QueryInterceptability
         => BakeableTerminators.Contains(method.Name)
             && method.ContainingType.ToDisplayString() == "Mizzle.Fluent.SelectBuilder";
 
-    // A terminator is interceptable exactly when the generator can bake SQL for it.
+    // A terminator is interceptable when the generator can bake SQL for it, OR
+    // when it resolves via the dynamic-mapper fallback -- a bound T whose select
+    // shape survives every reassignment gets a real generated mapper forwarded to
+    // a delegate-based overload (see ProjectionGenerator.Transform). Judging only
+    // full baking here would report MIZ002 for a call site the generator itself
+    // already made safe.
     public static bool IsInterceptableFluentChain(InvocationExpressionSyntax terminator, SemanticModel model)
     {
         if (model.GetSymbolInfo(terminator).Symbol is not IMethodSymbol method
@@ -34,6 +39,30 @@ internal static class QueryInterceptability
         }
 
         var spec = BakedChainWalker.TryGetSpec(terminator, model);
-        return spec is not null && BakedSqlEmitter.Emit(spec) is not null;
+        if (spec is not null && BakedSqlEmitter.Emit(spec) is not null)
+        {
+            return true;
+        }
+
+        return IsResolvableByDynamicMapper(terminator, model);
+    }
+
+    private static bool IsResolvableByDynamicMapper(InvocationExpressionSyntax terminator, SemanticModel model)
+    {
+        if (terminator.Expression is not MemberAccessExpressionSyntax { Name: GenericNameSyntax generic } member
+            || generic.TypeArgumentList.Arguments.Count != 1)
+        {
+            return false;
+        }
+
+        var argType = model.GetTypeInfo(generic.TypeArgumentList.Arguments[0]).Type;
+        if (argType is not INamedTypeSymbol bound || argType is IErrorTypeSymbol)
+        {
+            return false;
+        }
+
+        var dynamicSelect = BakedChainWalker.TryGetProjectionOnlySelect(member.Expression, model);
+        return dynamicSelect is not null
+            && ProjectionGenerator.CanBuildMapPlan(bound, dynamicSelect, model.Compilation);
     }
 }

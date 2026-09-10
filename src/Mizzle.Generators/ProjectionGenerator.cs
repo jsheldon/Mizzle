@@ -316,6 +316,13 @@ public sealed class ProjectionGenerator : IIncrementalGenerator
     // diagnostics into errors and returns null. Expression text is composed later,
     // in Generate, because it depends on the MizzleTrimStrings build property,
     // which only reaches the pipeline at the RegisterSourceOutput stage.
+    // QueryInterceptability's Strict-mode check needs to know whether this same
+    // resolution would succeed, without taking a dependency on MapperPlan itself
+    // (private to this generator).
+    internal static bool CanBuildMapPlan(
+        INamedTypeSymbol target, IReadOnlyList<BakedColumn> select, Compilation compilation)
+        => BuildMapPlan(target, select, compilation, []) is not null;
+
     private static MapperPlan? BuildMapPlan(
         INamedTypeSymbol target,
         IReadOnlyList<BakedColumn> select,

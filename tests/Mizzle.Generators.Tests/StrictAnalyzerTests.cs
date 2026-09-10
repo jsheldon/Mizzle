@@ -109,4 +109,82 @@ public sealed class StrictAnalyzerTests
         var diagnostics = GeneratorTestHost.Analyze(UsersTable + "\n" + site, queryMode: "Strict");
         Assert.DoesNotContain(diagnostics, d => d.Id == "MIZ002");
     }
+
+    private const string PeopleTable = """
+        using System;
+        using Mizzle.SqlServer;
+
+        namespace Demo;
+
+        public sealed class People : SqlTable<People>
+        {
+            public People() : base("people", "dbo") { }
+            public SqlColumn<Guid> PersonId { get; } = UniqueIdentifier("person_id").NotNull();
+            public SqlColumn<string> Status { get; } = VarChar("status", 20).NotNull();
+        }
+        """;
+
+    // ProjectionGenerator resolves a reassigned local (q = q.Where(...)) via the
+    // dynamic-mapper path, forwarding to a delegate-based overload with a real
+    // generated mapper -- it never falls back to a delegate-free runtime throw.
+    // Strict mode must accept that resolution too, not just full SQL baking: it
+    // would otherwise reject a call site the generator itself already made safe.
+    [Fact]
+    public void Strict_mode_accepts_a_reassigned_local_resolved_by_the_dynamic_mapper()
+    {
+        const string site = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            internal sealed class Row { public System.Guid PersonId { get; set; } }
+
+            internal static class Q
+            {
+                public static async Task Run(SqlDb db, bool flag)
+                {
+                    var p = new People();
+                    var q = db.Select(p.PersonId).From(p);
+                    if (flag) q = q.Where(p.Status.Eq("open"));
+                    var rows = await q.ToListAsync<Row>();
+                }
+            }
+            """;
+
+        var diagnostics = GeneratorTestHost.Analyze(PeopleTable + "\n" + site, queryMode: "Strict");
+        Assert.DoesNotContain(diagnostics, d => d.Id == "MIZ002");
+    }
+
+    // Same shape, but the reassignment re-invokes Select -- ProjectionGenerator
+    // refuses to trust that the column list still matches (MIZ014), so Strict
+    // mode must still reject it: there is no generated mapper to fall back to.
+    [Fact]
+    public void Strict_mode_still_rejects_a_reassignment_that_re_selects()
+    {
+        const string site = """
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.SqlServer;
+
+            namespace Demo;
+
+            internal sealed class Row { public System.Guid PersonId { get; set; } }
+
+            internal static class Q
+            {
+                public static async Task Run(SqlDb db, bool flag)
+                {
+                    var p = new People();
+                    var q = db.Select(p.PersonId).From(p);
+                    if (flag) q = q.Select(p.PersonId, p.Status).From(p);
+                    var rows = await q.ToListAsync<Row>();
+                }
+            }
+            """;
+
+        var diagnostics = GeneratorTestHost.Analyze(PeopleTable + "\n" + site, queryMode: "Strict");
+        Assert.Contains(diagnostics, d => d.Id == "MIZ002");
+    }
 }
