@@ -298,6 +298,41 @@ nullability, and the projection diagnostics. Note that nothing checks the
 declared columns against the CTE body's select list -- a mismatch surfaces at the
 database, not at build time.
 
+## Ranking within a partition
+
+`Sql.RowNumber()` builds `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)`,
+for picking one "best" row per group. There is no separate "top 1 per group"
+query shape -- combine it with a CTE and a second, typed CTE that filters the
+rank column, same as any other computed column:
+
+```csharp
+public sealed class Ranked : PgTable<Ranked>
+{
+    public Ranked() : base("ranked") { }
+    public PgColumn<string> Ndc { get; } = Text("ndc").NotNull();
+    public PgColumn<int> Rn { get; } = Integer("rn").NotNull();
+}
+
+var ranked = db.Select(
+        o.Ndc,
+        Sql.As(Sql.RowNumber().PartitionBy(o.Ndc).OrderByDesc(o.EffectiveDate), "rn"))
+    .From(o)
+    .Build();
+
+var best = new Ranked();
+var rows = await db.Select(best.Ndc)
+    .With(CteBuilder.Named("ranked", ranked))
+    .From(best)
+    .Where(best.Rn.Eq(1))
+    .ToListAsync<BestNdc>();
+```
+
+`PartitionBy`/`OrderBy`/`OrderByDesc` take either a plain column or a computed
+expression (`Sql.Case(...)`, `TSql.RTrim(...)`, ...); mixing both kinds in one
+call needs an explicit `.ToRef()` on the column. `ROW_NUMBER()` is the only
+window function Mizzle supports today -- no `RANK`, no frame-based aggregates
+(`SUM() OVER`, ...), no `QUALIFY`.
+
 ## Returning rows from writes
 
 Insert, update and delete expose the same typed terminators as select --

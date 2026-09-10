@@ -223,6 +223,19 @@ public static class FeatureCollector
                 }
 
                 break;
+            case RowNumberExpr rowNumber:
+                features.Add(Feature.RowNumberRanking);
+                foreach (var partition in rowNumber.PartitionColumns)
+                {
+                    CollectExpr(partition, features);
+                }
+
+                foreach (var order in rowNumber.OrderColumns)
+                {
+                    CollectExpr(order.Expr, features);
+                }
+
+                break;
         }
     }
 }

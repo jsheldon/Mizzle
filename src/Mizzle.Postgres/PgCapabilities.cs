@@ -15,7 +15,8 @@ public sealed class PgCapabilities : IDialectCapabilities
         Feature.Savepoint,
         Feature.AdvisoryLock,
         Feature.ILike,
-        Feature.WindowCount
+        Feature.WindowCount,
+        Feature.RowNumberRanking
     ];
 
     public DialectKind Dialect => DialectKind.Postgres;

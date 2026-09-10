@@ -733,7 +733,8 @@ internal static class BakedChainWalker
 
             if ((ResolveConvertSql(expression)
                  ?? ResolveTSqlCallSql(expression)
-                 ?? ResolveCaseSql(expression)) is { } convertSql)
+                 ?? ResolveCaseSql(expression)
+                 ?? ResolveRowNumberSql(expression)) is { } convertSql)
             {
                 if (requireAlias && alias is null)
                 {
@@ -1349,6 +1350,86 @@ internal static class BakedChainWalker
             }
 
             return sql.Append(" END").ToString();
+        }
+
+        // Sql.RowNumber().PartitionBy(a, b).OrderBy(c).OrderByDesc(d) ->
+        // ROW_NUMBER() OVER (PARTITION BY [t].[a], [t].[b] ORDER BY [t].[c], [t].[d] DESC).
+        // Every argument resolves through the same column/CONVERT/TSql-call scalar
+        // position a CASE arm uses (ResolveScalarSql); anything else -- a nested
+        // CASE, Sql.Coalesce, a bound literal -- fails the bake and the caller falls
+        // back to the runtime path.
+        public string? ResolveRowNumberSql(ExpressionSyntax expression)
+        {
+            var calls = new List<(string Name, InvocationExpressionSyntax Invocation)>();
+            var current = UnwrapExprLocal(expression);
+            while (current is InvocationExpressionSyntax invocation)
+            {
+                if (invocation.Expression is not MemberAccessExpressionSyntax member)
+                {
+                    return null;
+                }
+
+                calls.Add((member.Name.Identifier.Text, invocation));
+                current = member.Expression;
+            }
+
+            calls.Reverse();
+            if (calls.Count == 0
+                || _model.GetSymbolInfo(calls[0].Invocation).Symbol is not IMethodSymbol
+                {
+                    Name: "RowNumber",
+                    ContainingType.Name: "Sql"
+                }
+                || calls[0].Invocation.ArgumentList.Arguments.Count != 0)
+            {
+                return null;
+            }
+
+            var partitions = new List<string>();
+            var orders = new List<string>();
+            for (var i = 1; i < calls.Count; i++)
+            {
+                var (name, invocation) = calls[i];
+                var args = invocation.ArgumentList.Arguments;
+                switch (name)
+                {
+                    case "PartitionBy":
+                        foreach (var arg in args)
+                        {
+                            if (ResolveScalarSql(arg.Expression) is not { } partitionSql)
+                            {
+                                return null;
+                            }
+
+                            partitions.Add(partitionSql);
+                        }
+
+                        break;
+                    case "OrderBy" or "OrderByDesc" when args.Count == 1:
+                        if (ResolveScalarSql(args[0].Expression) is not { } orderSql)
+                        {
+                            return null;
+                        }
+
+                        orders.Add(name == "OrderByDesc" ? orderSql + " DESC" : orderSql);
+                        break;
+                    default:
+                        return null;
+                }
+            }
+
+            if (orders.Count == 0)
+            {
+                return null;
+            }
+
+            var sql = new StringBuilder("ROW_NUMBER() OVER (");
+            if (partitions.Count > 0)
+            {
+                sql.Append("PARTITION BY ").Append(string.Join(", ", partitions)).Append(' ');
+            }
+
+            return sql.Append("ORDER BY ").Append(string.Join(", ", orders)).Append(')').ToString();
         }
 
         private string? ResolveWhenSql(ExpressionSyntax expression)

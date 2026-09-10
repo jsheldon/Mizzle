@@ -12,5 +12,6 @@ public enum Feature
     AdvisoryLock,
     AppLock,
     ILike,
-    WindowCount
+    WindowCount,
+    RowNumberRanking
 }

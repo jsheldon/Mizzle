@@ -260,6 +260,7 @@ public sealed class SqlServerEmitter : ISqlEmitter
         BetweenExpr b => $"{Expr(b.Value)} BETWEEN {Expr(b.Lo)} AND {Expr(b.Hi)}",
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
         CaseExpr @case => Case(@case),
+        RowNumberExpr rowNumber => RowNumber(rowNumber),
         _ => throw new NotSupportedException($"Unsupported expression {expr.GetType().Name}.")
     };
 
@@ -277,6 +278,25 @@ public sealed class SqlServerEmitter : ISqlEmitter
         }
 
         return sql.Append(" END").ToString();
+    }
+
+    private static string RowNumber(RowNumberExpr rowNumber)
+    {
+        if (rowNumber.OrderColumns.Count == 0)
+        {
+            throw new InvalidOperationException("ROW_NUMBER() requires at least one ORDER BY column.");
+        }
+
+        var sql = new StringBuilder("ROW_NUMBER() OVER (");
+        if (rowNumber.PartitionColumns.Count > 0)
+        {
+            sql.Append("PARTITION BY ")
+                .Append(string.Join(", ", rowNumber.PartitionColumns.Select(Expr)))
+                .Append(' ');
+        }
+
+        sql.Append("ORDER BY ").Append(string.Join(", ", rowNumber.OrderColumns.Select(Order)));
+        return sql.Append(')').ToString();
     }
 
     private static string Call(CallExpr call)

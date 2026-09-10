@@ -82,6 +82,27 @@ public static class Sql
             ? new CaseExpr([..whens])
             : throw new ArgumentException("A CASE needs at least one WHEN arm.", nameof(whens));
 
+    /// <summary>
+    ///     A ranking window function: <c>ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)</c>.
+    ///     Chain <see cref="RowNumberExpr.PartitionBy"/> and
+    ///     <see cref="RowNumberExpr.OrderBy"/>/<see cref="RowNumberExpr.OrderByDesc"/>; mixing a
+    ///     plain column with a computed expression in the same call needs an explicit
+    ///     <c>.ToRef()</c> on the column.
+    /// </summary>
+    public static RowNumberExpr RowNumber() => new([], []);
+
+    /// <summary>Partitions a <see cref="RowNumberExpr"/> by one or more plain columns.</summary>
+    public static RowNumberExpr PartitionBy(this RowNumberExpr rowNumber, params IColumn[] columns)
+        => rowNumber.PartitionBy([..columns.Select(c => c.ToRef())]);
+
+    /// <summary>Orders a <see cref="RowNumberExpr"/> by a plain column, ascending.</summary>
+    public static RowNumberExpr OrderBy(this RowNumberExpr rowNumber, IColumn column)
+        => rowNumber.OrderBy(column.ToRef());
+
+    /// <summary>Orders a <see cref="RowNumberExpr"/> by a plain column, descending.</summary>
+    public static RowNumberExpr OrderByDesc(this RowNumberExpr rowNumber, IColumn column)
+        => rowNumber.OrderByDesc(column.ToRef());
+
     /// <summary>A <c>BETWEEN</c> range test, inclusive of both bounds.</summary>
     public static BetweenExpr Between(Expr value, Expr lo, Expr hi) => new(value, lo, hi);
 

@@ -74,6 +74,23 @@ public sealed record CaseExpr(EquatableList<CaseWhen> Whens, Expr? Fallback = nu
     public CaseExpr Else(Expr result) => this with { Fallback = result };
 }
 
+// A ranking window function: ROW_NUMBER() OVER (PARTITION BY ... ORDER BY
+// ...). Reuses OrderByItem so a multi-column, mixed-direction tie-break
+// costs nothing new. PartitionColumns may be empty (no PARTITION BY clause);
+// OrderColumns may not (an emitter rejects a ROW_NUMBER with no ORDER BY).
+public sealed record RowNumberExpr(
+    EquatableList<Expr> PartitionColumns,
+    EquatableList<OrderByItem> OrderColumns) : Expr
+{
+    public RowNumberExpr PartitionBy(params Expr[] columns) => this with { PartitionColumns = [..columns] };
+
+    public RowNumberExpr OrderBy(Expr expr)
+        => this with { OrderColumns = [..OrderColumns, new OrderByItem(expr, false)] };
+
+    public RowNumberExpr OrderByDesc(Expr expr)
+        => this with { OrderColumns = [..OrderColumns, new OrderByItem(expr, true)] };
+}
+
 public static class QueryShape
 {
     public static Expr StripValues(Expr expr) => expr;

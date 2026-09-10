@@ -100,6 +100,11 @@ public static class Parameterizer
                 })],
                 Fallback = @case.Fallback is null ? null : Rewrite(@case.Fallback)
             },
+            RowNumberExpr rowNumber => rowNumber with
+            {
+                PartitionColumns = [..rowNumber.PartitionColumns.Select(Rewrite)],
+                OrderColumns = [..rowNumber.OrderColumns.Select(o => o with { Expr = Rewrite(o.Expr) })]
+            },
             _ => expr
         };
 
