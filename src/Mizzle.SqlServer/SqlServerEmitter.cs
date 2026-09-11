@@ -27,8 +27,18 @@ public sealed class SqlServerEmitter : ISqlEmitter
             case DeleteQuery delete:
                 WriteDelete(sql, delete);
                 break;
-            case LockQuery:
-                sql.Append("EXEC sp_getapplock @Resource = @p0, @LockMode = 'Exclusive', @LockOwner = 'Transaction';");
+            case LockQuery lockQuery:
+                // Reads sp_getapplock's own result code back (0/1 success, negative on
+                // timeout/deadlock/cancel/error) so the caller can tell a failed lock from a
+                // granted one instead of silently continuing as if it always succeeds.
+                sql.Append("DECLARE @result int; EXEC @result = sp_getapplock @Resource = @p0, ");
+                sql.Append("@LockMode = 'Exclusive', @LockOwner = 'Transaction'");
+                if (lockQuery.Timeout is { } timeout)
+                {
+                    sql.Append(", @LockTimeout = ").Append((int)timeout.TotalMilliseconds);
+                }
+
+                sql.Append("; SELECT @result;");
                 break;
             default:
                 throw new NotSupportedException($"SQL Server emitter does not support {query.GetType().Name} yet.");

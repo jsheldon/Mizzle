@@ -6,9 +6,11 @@ public static class FeatureCollector
 {
     public static IReadOnlyList<Feature> Collect(Query query)
     {
-        if (query is LockQuery)
+        if (query is LockQuery lockQuery)
         {
-            return [Feature.AdvisoryLock];
+            return lockQuery.Timeout is null
+                ? [Feature.AdvisoryLock]
+                : [Feature.AdvisoryLock, Feature.LockTimeout];
         }
 
         var features = new HashSet<Feature>();

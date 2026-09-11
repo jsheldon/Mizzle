@@ -14,5 +14,6 @@ public enum Feature
     ILike,
     WindowCount,
     RowNumberRanking,
-    UpdateJoin
+    UpdateJoin,
+    LockTimeout
 }

@@ -18,6 +18,7 @@ public static class FeatureSupport
             [Feature.WindowCount] = [DialectKind.Postgres, DialectKind.SqlServer],
             [Feature.RowNumberRanking] = [DialectKind.Postgres, DialectKind.SqlServer],
             [Feature.UpdateJoin] = [DialectKind.SqlServer],
+            [Feature.LockTimeout] = [DialectKind.SqlServer],
         };
 
     public static IReadOnlyList<DialectKind> WhoSupports(Feature feature)

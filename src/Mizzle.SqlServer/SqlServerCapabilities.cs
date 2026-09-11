@@ -16,7 +16,8 @@ public sealed class SqlServerCapabilities : IDialectCapabilities
         Feature.AppLock,
         Feature.WindowCount,
         Feature.RowNumberRanking,
-        Feature.UpdateJoin
+        Feature.UpdateJoin,
+        Feature.LockTimeout
     ];
 
     public DialectKind Dialect => DialectKind.SqlServer;

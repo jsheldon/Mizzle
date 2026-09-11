@@ -281,8 +281,8 @@ public sealed class SqlDb : IQueryExecutor
             CancellationToken cancellationToken)
             => _database.QueryPrecompiledAsync(sql, query, map, overlay, cancellationToken);
 
-        public Task LockAsync(string resource, CancellationToken cancellationToken = default)
-            => SqlLock.AcquireAsync(_database, resource, cancellationToken);
+        public Task LockAsync(string resource, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+            => SqlLock.AcquireAsync(_database, resource, timeout, cancellationToken);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

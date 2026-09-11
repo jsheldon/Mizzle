@@ -59,4 +59,4 @@ public sealed record DeleteQuery(
     EquatableList<CteClause> With,
     bool RecursiveWith) : Query;
 
-public sealed record LockQuery(string Resource) : Query;
+public sealed record LockQuery(string Resource, TimeSpan? Timeout = null) : Query;
