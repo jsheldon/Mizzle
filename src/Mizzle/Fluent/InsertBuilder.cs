@@ -67,6 +67,25 @@ public sealed class InsertBuilder
             currentColumns: [.._currentColumns, column.Name]);
     }
 
+    /// <summary>
+    ///     Binds a computed/server-side expression (e.g. <c>TSql.GetDate()</c>) as this column's
+    ///     value. Emitted as literal SQL in the VALUES list, not a bound parameter -- use this for
+    ///     values the database itself must compute (server clocks, sequences, etc.) that an
+    ///     application-supplied literal cannot faithfully substitute for. Prefer the
+    ///     <see cref="Value{T}(Column{T},T)"/> overload for ordinary literal values.
+    /// </summary>
+    public InsertBuilder Value<T>(Column<T> column, Expr expression)
+    {
+        if (_fromSelect is not null)
+        {
+            throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
+        }
+
+        return Copy(
+            currentRow: [.._currentRow, expression],
+            currentColumns: [.._currentColumns, column.Name]);
+    }
+
     public InsertBuilder NewRow()
     {
         if (_currentRow.Count == 0)

@@ -51,6 +51,16 @@ public sealed class UpdateBuilder
     public UpdateBuilder Set<T>(Column<T> column, T value)
         => Copy(set: [.._set, (column.Name, (Expr)column.Bind(value))]);
 
+    /// <summary>
+    ///     Sets this column to a computed/server-side expression (e.g. <c>TSql.GetDate()</c>)
+    ///     rather than a literal value. Emitted as literal SQL, not a bound parameter -- use this
+    ///     for values the database itself must compute that an application-supplied literal
+    ///     cannot faithfully substitute for. Prefer the <see cref="Set{T}(Column{T},T)"/> overload
+    ///     for ordinary literal values.
+    /// </summary>
+    public UpdateBuilder Set<T>(Column<T> column, Expr expression)
+        => Copy(set: [.._set, (column.Name, expression)]);
+
     public UpdateBuilder Where(Expr expr)
         => Copy(where: _where is null ? expr : Sql.And(_where, expr));
 

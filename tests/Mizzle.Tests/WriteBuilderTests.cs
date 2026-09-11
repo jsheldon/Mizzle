@@ -84,6 +84,21 @@ public sealed class WriteBuilderTests
     }
 
     [Fact]
+    public void Insert_value_with_computed_expression_renders_as_literal_sql()
+    {
+        var users = new Users();
+        var now = new CallExpr("now", [], DialectKind.Postgres);
+        var b = new InsertBuilder(users)
+            .Value(users.Email, "a@b.com")
+            .Value(users.Id, now);
+        var (sql, values) = EmitPg(b.Build());
+        Assert.Equal(
+            "INSERT INTO \"public\".\"users\" (\"email\", \"id\") VALUES ($1, now())",
+            sql);
+        Assert.Equal(["a@b.com"], values);
+    }
+
+    [Fact]
     public void Insert_two_rows_builds_two_value_tuples()
     {
         var users = new Users();
@@ -225,6 +240,22 @@ public sealed class WriteBuilderTests
         Assert.Equal(
             "DELETE FROM \"public\".\"users\" AS \"users\" WHERE \"users\".\"email\" = $1 RETURNING \"users\".\"id\"",
             sql);
+    }
+
+    [Fact]
+    public void Update_set_with_computed_expression_renders_as_literal_sql()
+    {
+        var users = new Users();
+        var now = new CallExpr("now", [], DialectKind.Postgres);
+        var b = new UpdateBuilder(users)
+            .Set(users.Email, "new@b.com")
+            .Set(users.Id, now)
+            .Where(users.Id, 1);
+        var (sql, values) = EmitPg(b.Build());
+        Assert.Equal(
+            "UPDATE \"public\".\"users\" AS \"users\" SET \"email\" = $1, \"id\" = now() WHERE \"users\".\"id\" = $2",
+            sql);
+        Assert.Equal(["new@b.com", 1], values);
     }
 
     [Fact]

@@ -75,6 +75,43 @@ public sealed class WriteEmitterTests
     }
 
     [Fact]
+    public void SqlServer_update_set_computed_expression_renders_as_literal_sql()
+    {
+        var getDate = new CallExpr("getdate", [], DialectKind.SqlServer);
+        var id = new ParamRef(0, typeof(int));
+        var q = new UpdateQuery(
+            Table: new FromSource("users", "dbo", "u"),
+            Set: [("modified_at", getDate)],
+            Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
+            Returning: [],
+            With: [],
+            RecursiveWith: false);
+        var sql = new SqlServerEmitter().Emit(q, [1]);
+        Assert.Equal(
+            "UPDATE [dbo].[users] SET [modified_at] = getdate() WHERE [u].[id] = @p0",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_insert_computed_expression_renders_as_literal_sql_alongside_a_bound_value()
+    {
+        var getDate = new CallExpr("getdate", [], DialectKind.SqlServer);
+        var email = new ParamRef(0, typeof(string));
+        var q = new InsertQuery(
+            Into: new FromSource("users", "dbo", "u"),
+            Columns: ["email", "created_at"],
+            ValuesRows: [[email, getDate]],
+            FromSelect: null,
+            Returning: [],
+            With: [],
+            RecursiveWith: false);
+        var sql = new SqlServerEmitter().Emit(q, ["a@b.com"]);
+        Assert.Equal(
+            "INSERT INTO [dbo].[users] ([email], [created_at]) VALUES (@p0, getdate())",
+            sql.Sql);
+    }
+
+    [Fact]
     public void SqlServer_update_set_where()
     {
         var email = new ParamRef(0, typeof(string));
