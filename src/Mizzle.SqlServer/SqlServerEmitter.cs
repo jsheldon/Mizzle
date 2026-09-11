@@ -96,9 +96,32 @@ public sealed class SqlServerEmitter : ISqlEmitter
     {
         WriteWithPrefix(sql, update.With);
         sql.Append("UPDATE ");
-        sql.Append(Table(update.Table));
-        sql.Append(" SET ");
-        sql.Append(string.Join(", ", update.Set.Select(s => $"{Quote(s.Column)} = {Expr(s.Value)}")));
+        if (update.Joins.Count > 0)
+        {
+            // UPDATE <alias> SET <alias>.<col> = ... FROM <table> AS <alias> JOIN ... ON ...:
+            // SQL Server requires the alias declared in FROM as the UPDATE target once a join is
+            // present, and every SET column qualified by it to stay unambiguous across the join.
+            sql.Append(Quote(update.Table.Alias));
+            sql.Append(" SET ");
+            sql.Append(string.Join(", ",
+                update.Set.Select(s => $"{Quote(update.Table.Alias)}.{Quote(s.Column)} = {Expr(s.Value)}")));
+            sql.Append(" FROM ");
+            sql.Append(From(update.Table));
+            foreach (var join in update.Joins)
+            {
+                sql.Append(join.Kind == JoinKind.Inner ? " INNER JOIN " : " LEFT JOIN ");
+                sql.Append(From(join.Target));
+                sql.Append(" ON ");
+                sql.Append(Expr(join.On));
+            }
+        }
+        else
+        {
+            sql.Append(Table(update.Table));
+            sql.Append(" SET ");
+            sql.Append(string.Join(", ", update.Set.Select(s => $"{Quote(s.Column)} = {Expr(s.Value)}")));
+        }
+
         if (update.Returning.Count > 0)
         {
             sql.Append(" OUTPUT ");
@@ -249,15 +272,15 @@ public sealed class SqlServerEmitter : ISqlEmitter
         ColumnRef col => $"{Quote(col.TableAlias)}.{Quote(col.ColumnName)}",
         ParamRef param => $"@p{param.Slot}",
         ValueExpr => throw new InvalidOperationException("Query was not parameterized before emit."),
-        BinaryExpr bin => Binary(bin),
+        BinaryExpr binary => Binary(binary),
         LikeExpr like => Like(like),
         UnaryExpr unary => Unary(unary),
-        AggregateExpr agg => Aggregate(agg),
+        AggregateExpr aggregate => Aggregate(aggregate),
         CallExpr call => Call(call),
         ConvertExpr convert => convert.Style is { } style
             ? $"CONVERT({convert.SqlType}, {Expr(convert.Value)}, {style})"
             : $"CONVERT({convert.SqlType}, {Expr(convert.Value)})",
-        InExpr inn => $"{Expr(inn.Needle)} IN ({string.Join(", ", inn.Haystack.Select(Expr))})",
+        InExpr inExpression => $"{Expr(inExpression.Needle)} IN ({string.Join(", ", inExpression.Haystack.Select(Expr))})",
         BetweenExpr b => $"{Expr(b.Value)} BETWEEN {Expr(b.Lo)} AND {Expr(b.Hi)}",
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
         CaseExpr @case => Case(@case),
@@ -310,10 +333,10 @@ public sealed class SqlServerEmitter : ISqlEmitter
         return $"{call.Name}({string.Join(", ", call.Args.Select(Expr))})";
     }
 
-    private static string Aggregate(AggregateExpr agg)
+    private static string Aggregate(AggregateExpr aggregate)
     {
-        var name = agg.Kind.ToString().ToLowerInvariant();
-        return agg.Arg is null ? $"{name}(*)" : $"{name}({Expr(agg.Arg)})";
+        var name = aggregate.Kind.ToString().ToLowerInvariant();
+        return aggregate.Arg is null ? $"{name}(*)" : $"{name}({Expr(aggregate.Arg)})";
     }
 
     // CaseInsensitive can never reach here: the capability check (FeatureCollector/
@@ -324,9 +347,9 @@ public sealed class SqlServerEmitter : ISqlEmitter
         return $"{Expr(like.Left)} LIKE {Expr(like.Right)} ESCAPE '{escapeLiteral}'";
     }
 
-    private static string Binary(BinaryExpr bin)
+    private static string Binary(BinaryExpr binary)
     {
-        var op = bin.Op switch
+        var op = binary.Op switch
         {
             BinaryOp.Eq => "=",
             BinaryOp.Ne => "<>",
@@ -339,12 +362,14 @@ public sealed class SqlServerEmitter : ISqlEmitter
             BinaryOp.Like => "LIKE",
             BinaryOp.ILike => throw new UnsupportedFeatureException(
                 Feature.ILike, DialectKind.SqlServer, FeatureSupport.WhoSupports(Feature.ILike)),
-            _ => throw new NotSupportedException($"Unsupported operator {bin.Op}.")
+            BinaryOp.Add => "+",
+            BinaryOp.Subtract => "-",
+            _ => throw new NotSupportedException($"Unsupported operator {binary.Op}.")
         };
 
-        return bin.Op is BinaryOp.And or BinaryOp.Or
-            ? $"({Expr(bin.Left)} {op} {Expr(bin.Right)})"
-            : $"{Expr(bin.Left)} {op} {Expr(bin.Right)}";
+        return binary.Op is BinaryOp.And or BinaryOp.Or
+            ? $"({Expr(binary.Left)} {op} {Expr(binary.Right)})"
+            : $"{Expr(binary.Left)} {op} {Expr(binary.Right)}";
     }
 
     private static string Unary(UnaryExpr unary) => unary.Op switch

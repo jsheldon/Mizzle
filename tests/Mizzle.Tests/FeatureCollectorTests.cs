@@ -42,6 +42,7 @@ public sealed class FeatureCollectorTests
     {
         var q = new UpdateQuery(
             Table: new FromSource("users", "dbo", "u"),
+            Joins: [],
             Set: [("flag", (Expr)ILike())],
             Where: null, Returning: [], With: [], RecursiveWith: false);
         Assert.Contains(Feature.ILike, FeatureCollector.Collect(q));

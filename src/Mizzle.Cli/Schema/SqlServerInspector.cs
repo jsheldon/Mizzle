@@ -4,7 +4,11 @@ namespace Mizzle.Cli.Schema;
 
 internal sealed class SqlServerInspector : IDatabaseInspector
 {
-    public async Task<IReadOnlyList<TableInfo>> InspectAsync(string connectionString, string? schema, IReadOnlyList<string>? tables, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<TableInfo>> InspectAsync(
+        string connectionString,
+        string? schema,
+        IReadOnlyList<string>? tables,
+        CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT

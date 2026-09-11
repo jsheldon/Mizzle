@@ -17,7 +17,7 @@ public abstract class Table<TSelf> : ITable
         Schema = schema;
         Alias = name;
         BindColumns();
-        Constraints = [..DefineConstraints()];
+        Constraints = [.. DefineConstraints()];
     }
 
     /// <summary>The table's name in the database.</summary>

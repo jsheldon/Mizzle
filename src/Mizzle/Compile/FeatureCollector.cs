@@ -21,7 +21,7 @@ public static class FeatureCollector
             CollectWrite(query, features);
         }
 
-        return [..features];
+        return [.. features];
     }
 
     private static void CollectSelect(SelectQuery select, HashSet<Feature> features)
@@ -107,6 +107,16 @@ public static class FeatureCollector
                 break;
             case UpdateQuery update:
                 CollectWriteMeta(update.With, update.RecursiveWith, update.Returning, features);
+                if (update.Joins.Count > 0)
+                {
+                    features.Add(Feature.UpdateJoin);
+                }
+
+                foreach (var join in update.Joins)
+                {
+                    CollectExpr(join.On, features);
+                }
+
                 foreach (var (_, value) in update.Set)
                 {
                     CollectExpr(value, features);
@@ -179,16 +189,16 @@ public static class FeatureCollector
                 CollectExpr(like.Left, features);
                 CollectExpr(like.Right, features);
                 break;
-            case BinaryExpr bin:
-                CollectExpr(bin.Left, features);
-                CollectExpr(bin.Right, features);
+            case BinaryExpr binary:
+                CollectExpr(binary.Left, features);
+                CollectExpr(binary.Right, features);
                 break;
             case UnaryExpr unary:
                 CollectExpr(unary.Operand, features);
                 break;
-            case InExpr inn:
-                CollectExpr(inn.Needle, features);
-                foreach (var item in inn.Haystack)
+            case InExpr inExpression:
+                CollectExpr(inExpression.Needle, features);
+                foreach (var item in inExpression.Haystack)
                 {
                     CollectExpr(item, features);
                 }
@@ -206,8 +216,8 @@ public static class FeatureCollector
                 }
 
                 break;
-            case AggregateExpr { Arg: not null } agg:
-                CollectExpr(agg.Arg, features);
+            case AggregateExpr { Arg: not null } aggregate:
+                CollectExpr(aggregate.Arg, features);
                 break;
             case CallExpr call:
                 foreach (var arg in call.Args)

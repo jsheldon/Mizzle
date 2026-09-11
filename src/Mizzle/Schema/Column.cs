@@ -181,7 +181,7 @@ public abstract class Column<T> : IColumn, IBindableColumn, IRuntimeReadableColu
     public UnaryExpr IsNotNull() => new(UnaryOp.IsNotNull, ToRef());
 
     public InExpr In(params T[] values)
-        => new(ToRef(), [..values.Select(v => (Expr)Bind(v))]);
+        => new(ToRef(), [.. values.Select(v => (Expr)Bind(v))]);
 
     public BetweenExpr Between(T lo, T hi)
         => new(ToRef(), Bind(lo), Bind(hi));

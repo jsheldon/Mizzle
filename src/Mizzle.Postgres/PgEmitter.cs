@@ -236,12 +236,12 @@ public sealed class PgEmitter : ISqlEmitter
         ColumnRef col => $"{Quote(col.TableAlias)}.{Quote(col.ColumnName)}",
         ParamRef param => $"${param.Slot + 1}",
         ValueExpr => throw new InvalidOperationException("Query was not parameterized before emit."),
-        BinaryExpr bin => Binary(bin),
+        BinaryExpr binary => Binary(binary),
         LikeExpr like => Like(like),
         UnaryExpr unary => Unary(unary),
-        AggregateExpr agg => Aggregate(agg),
+        AggregateExpr aggregate => Aggregate(aggregate),
         CallExpr call => Call(call),
-        InExpr inn => $"{Expr(inn.Needle)} IN ({string.Join(", ", inn.Haystack.Select(Expr))})",
+        InExpr inExpression => $"{Expr(inExpression.Needle)} IN ({string.Join(", ", inExpression.Haystack.Select(Expr))})",
         BetweenExpr b => $"{Expr(b.Value)} BETWEEN {Expr(b.Lo)} AND {Expr(b.Hi)}",
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
         CaseExpr @case => Case(@case),
@@ -294,10 +294,10 @@ public sealed class PgEmitter : ISqlEmitter
         return $"{call.Name}({string.Join(", ", call.Args.Select(Expr))})";
     }
 
-    private static string Aggregate(AggregateExpr agg)
+    private static string Aggregate(AggregateExpr aggregate)
     {
-        var name = agg.Kind.ToString().ToLowerInvariant();
-        return agg.Arg is null ? $"{name}(*)" : $"{name}({Expr(agg.Arg)})";
+        var name = aggregate.Kind.ToString().ToLowerInvariant();
+        return aggregate.Arg is null ? $"{name}(*)" : $"{name}({Expr(aggregate.Arg)})";
     }
 
     private static string Like(LikeExpr like)
@@ -307,9 +307,9 @@ public sealed class PgEmitter : ISqlEmitter
         return $"{Expr(like.Left)} {op} {Expr(like.Right)} ESCAPE '{escapeLiteral}'";
     }
 
-    private static string Binary(BinaryExpr bin)
+    private static string Binary(BinaryExpr binary)
     {
-        var op = bin.Op switch
+        var op = binary.Op switch
         {
             BinaryOp.Eq => "=",
             BinaryOp.Ne => "<>",
@@ -321,12 +321,14 @@ public sealed class PgEmitter : ISqlEmitter
             BinaryOp.Or => "OR",
             BinaryOp.Like => "LIKE",
             BinaryOp.ILike => "ILIKE",
-            _ => throw new NotSupportedException($"Unsupported operator {bin.Op}.")
+            BinaryOp.Add => "+",
+            BinaryOp.Subtract => "-",
+            _ => throw new NotSupportedException($"Unsupported operator {binary.Op}.")
         };
 
-        return bin.Op is BinaryOp.And or BinaryOp.Or
-            ? $"({Expr(bin.Left)} {op} {Expr(bin.Right)})"
-            : $"{Expr(bin.Left)} {op} {Expr(bin.Right)}";
+        return binary.Op is BinaryOp.And or BinaryOp.Or
+            ? $"({Expr(binary.Left)} {op} {Expr(binary.Right)})"
+            : $"{Expr(binary.Left)} {op} {Expr(binary.Right)}";
     }
 
     private static string Unary(UnaryExpr unary) => unary.Op switch

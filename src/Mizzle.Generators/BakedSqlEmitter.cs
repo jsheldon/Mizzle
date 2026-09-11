@@ -4,7 +4,18 @@ namespace Mizzle.Generators;
 
 internal sealed class BakedColumn
 {
-    public BakedColumn(string tableAlias, string dbName, string propertyName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, string? projectionName = null, bool isUntrimmed = false, string? sqlExpression = null, bool isLiteral = false)
+    public BakedColumn(
+        string tableAlias,
+        string dbName,
+        string propertyName,
+        string clrTypeName,
+        bool isRequired,
+        string readerCall,
+        string? readConverter = null,
+        string? projectionName = null,
+        bool isUntrimmed = false,
+        string? sqlExpression = null,
+        bool isLiteral = false)
     {
         TableAlias = tableAlias;
         DbName = dbName;
@@ -65,7 +76,16 @@ internal sealed class BakedTable
 // col.Eq(col) when RightAlias/RightDbName are set; otherwise col.Eq(<runtime bind>).
 internal sealed class BakedCondition
 {
-    public BakedCondition(string leftAlias, string leftDbName, string? rightAlias, string? rightDbName, string? leftExpression = null, int? conditionalIndex = null, string op = "=", bool isUnary = false, string? rightExpression = null)
+    public BakedCondition(
+        string leftAlias,
+        string leftDbName,
+        string? rightAlias,
+        string? rightDbName,
+        string? leftExpression = null,
+        int? conditionalIndex = null,
+        string op = "=",
+        bool isUnary = false,
+        string? rightExpression = null)
     {
         LeftExpression = leftExpression;
         ConditionalIndex = conditionalIndex;

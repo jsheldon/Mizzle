@@ -12,11 +12,11 @@ public sealed class InsertBuilder
     private readonly EquatableList<EquatableList<Expr>> _rows;
     private readonly EquatableList<Expr> _currentRow;
     private readonly EquatableList<string> _currentColumns;
-    private readonly SelectQuery? _fromSelect;
-    private readonly EquatableList<SelectItem> _returning;
+    private readonly SelectQuery? _sourceQuery;
+    private readonly EquatableList<SelectItem> _returningItems;
     private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
-    private readonly EquatableList<CteClause> _with;
-    private readonly bool _recursiveWith;
+    private readonly EquatableList<CteClause> _commonTableExpressions;
+    private readonly bool _hasRecursiveCte;
 
     public InsertBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
         : this(table, executor, overlay, [], [], [], [], null, [], [], [], false)
@@ -44,11 +44,11 @@ public sealed class InsertBuilder
         _rows = rows;
         _currentRow = currentRow;
         _currentColumns = currentColumns;
-        _fromSelect = fromSelect;
-        _returning = returning;
+        _sourceQuery = fromSelect;
+        _returningItems = returning;
         _returningColumns = returningColumns;
-        _with = with;
-        _recursiveWith = recursiveWith;
+        _commonTableExpressions = with;
+        _hasRecursiveCte = recursiveWith;
     }
 
     public QueryOptions? Overlay { get; }
@@ -57,14 +57,14 @@ public sealed class InsertBuilder
     // value no longer compiles instead of failing only at the database.
     public InsertBuilder Value<T>(Column<T> column, T value)
     {
-        if (_fromSelect is not null)
+        if (_sourceQuery is not null)
         {
             throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
         }
 
         return Copy(
-            currentRow: [.._currentRow, column.Bind(value)],
-            currentColumns: [.._currentColumns, column.Name]);
+            currentRow: [.. _currentRow, column.Bind(value)],
+            currentColumns: [.. _currentColumns, column.Name]);
     }
 
     /// <summary>
@@ -76,14 +76,14 @@ public sealed class InsertBuilder
     /// </summary>
     public InsertBuilder Value<T>(Column<T> column, Expr expression)
     {
-        if (_fromSelect is not null)
+        if (_sourceQuery is not null)
         {
             throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
         }
 
         return Copy(
-            currentRow: [.._currentRow, expression],
-            currentColumns: [.._currentColumns, column.Name]);
+            currentRow: [.. _currentRow, expression],
+            currentColumns: [.. _currentColumns, column.Name]);
     }
 
     public InsertBuilder NewRow()
@@ -100,7 +100,7 @@ public sealed class InsertBuilder
 
         return Copy(
             columns: _columns.Count == 0 ? _currentColumns : _columns,
-            rows: [.._rows, _currentRow],
+            rows: [.. _rows, _currentRow],
             currentRow: new EquatableList<Expr>([]),
             currentColumns: new EquatableList<string>([]),
             resetCurrent: true);
@@ -114,7 +114,7 @@ public sealed class InsertBuilder
         }
 
         return Copy(
-            columns: [..columns.Select(c => c.Name)],
+            columns: [.. columns.Select(c => c.Name)],
             fromSelect: source);
     }
 
@@ -124,15 +124,15 @@ public sealed class InsertBuilder
     /// </summary>
     public InsertBuilder Returning(params IColumn[] columns)
         => Copy(
-            returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
-            returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
+            returning: [.. columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
+            returningColumns: [.. columns.Select(RuntimeProjectionColumn.From)]);
 
     /// <summary>Prefixes the statement with a common table expression.</summary>
-    public InsertBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+    public InsertBuilder With(CteClause cte) => Copy(with: [.. _commonTableExpressions, cte]);
 
     /// <summary>Prefixes the statement with a <c>WITH RECURSIVE</c> common table expression.</summary>
     public InsertBuilder WithRecursive(CteClause cte)
-        => Copy(with: [.._with, cte], recursiveWith: true);
+        => Copy(with: [.. _commonTableExpressions, cte], recursiveWith: true);
 
     public InsertBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
@@ -151,7 +151,7 @@ public sealed class InsertBuilder
                 throw new InvalidOperationException("All rows must set the same columns.");
             }
 
-            rows = [..rows, _currentRow];
+            rows = [.. rows, _currentRow];
         }
 
         foreach (var row in rows)
@@ -162,12 +162,12 @@ public sealed class InsertBuilder
             }
         }
 
-        if (rows.Count > 0 == _fromSelect is not null)
+        if (rows.Count > 0 == _sourceQuery is not null)
         {
             throw new InvalidOperationException("Insert requires exactly one of VALUES or a source select.");
         }
 
-        return new InsertQuery(_table.ToFrom(), columns, rows, _fromSelect, _returning, _with, _recursiveWith);
+        return new InsertQuery(_table.ToFrom(), columns, rows, _sourceQuery, _returningItems, _commonTableExpressions, _hasRecursiveCte);
     }
 
     public Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
@@ -262,9 +262,9 @@ public sealed class InsertBuilder
             rows ?? _rows,
             resetCurrent ? new EquatableList<Expr>([]) : currentRow ?? _currentRow,
             resetCurrent ? new EquatableList<string>([]) : currentColumns ?? _currentColumns,
-            fromSelect ?? _fromSelect,
-            returning ?? _returning,
+            fromSelect ?? _sourceQuery,
+            returning ?? _returningItems,
             returningColumns ?? _returningColumns,
-            with ?? _with,
-            recursiveWith ?? _recursiveWith);
+            with ?? _commonTableExpressions,
+            recursiveWith ?? _hasRecursiveCte);
 }

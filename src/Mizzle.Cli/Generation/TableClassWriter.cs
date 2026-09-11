@@ -15,15 +15,15 @@ internal static class TableClassWriter
         var columnType = provider == ProviderKind.Postgres ? "PgColumn" : "SqlColumn";
         var usingNs = provider == ProviderKind.Postgres ? "Mizzle.Postgres" : "Mizzle.SqlServer";
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"using {usingNs};");
-        sb.AppendLine();
-        sb.AppendLine($"namespace {ns};");
-        sb.AppendLine();
-        sb.AppendLine($"public sealed class {className} : {baseType}");
-        sb.AppendLine("{");
-        sb.AppendLine($"    public {className}() : base(\"{TextNames.Escape(table.Name)}\", \"{TextNames.Escape(table.Schema)}\") {{ }}");
-        sb.AppendLine();
+        var stringBuilder = new StringBuilder();
+        stringBuilder.AppendLine($"using {usingNs};");
+        stringBuilder.AppendLine();
+        stringBuilder.AppendLine($"namespace {ns};");
+        stringBuilder.AppendLine();
+        stringBuilder.AppendLine($"public sealed class {className} : {baseType}");
+        stringBuilder.AppendLine("{");
+        stringBuilder.AppendLine($"    public {className}() : base(\"{TextNames.Escape(table.Name)}\", \"{TextNames.Escape(table.Schema)}\") {{ }}");
+        stringBuilder.AppendLine();
         foreach (var column in table.Columns)
         {
             var mapping = TypeMappings.Resolve(provider, column);
@@ -51,10 +51,10 @@ internal static class TableClassWriter
             }
 
             var chain = modifiers.Count == 0 ? factory : factory + "." + string.Join(".", modifiers);
-            sb.AppendLine($"    public {columnType}<{mapping.ClrType}> {TextNames.ToPascal(column.Name)} {{ get; }} = {chain};");
+            stringBuilder.AppendLine($"    public {columnType}<{mapping.ClrType}> {TextNames.ToPascal(column.Name)} {{ get; }} = {chain};");
         }
 
-        sb.AppendLine("}");
-        return new GeneratedFile(className + ".cs", sb.ToString());
+        stringBuilder.AppendLine("}");
+        return new GeneratedFile(className + ".cs", stringBuilder.ToString());
     }
 }

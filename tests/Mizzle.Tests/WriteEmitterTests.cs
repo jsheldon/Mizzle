@@ -63,6 +63,7 @@ public sealed class WriteEmitterTests
         var id = new ParamRef(1, typeof(int));
         var q = new UpdateQuery(
             Table: new FromSource("users", "public", "u"),
+            Joins: [],
             Set: [("email", email)],
             Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
             Returning: [],
@@ -81,6 +82,7 @@ public sealed class WriteEmitterTests
         var id = new ParamRef(0, typeof(int));
         var q = new UpdateQuery(
             Table: new FromSource("users", "dbo", "u"),
+            Joins: [],
             Set: [("modified_at", getDate)],
             Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
             Returning: [],
@@ -118,6 +120,7 @@ public sealed class WriteEmitterTests
         var id = new ParamRef(1, typeof(int));
         var q = new UpdateQuery(
             Table: new FromSource("users", "dbo", "u"),
+            Joins: [],
             Set: [("email", email)],
             Where: new BinaryExpr(BinaryOp.Eq, new ColumnRef("u", "id", typeof(int)), id),
             Returning: [],

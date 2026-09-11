@@ -13,5 +13,6 @@ public enum Feature
     AppLock,
     ILike,
     WindowCount,
-    RowNumberRanking
+    RowNumberRanking,
+    UpdateJoin
 }

@@ -45,6 +45,7 @@ public sealed record InsertQuery(
 
 public sealed record UpdateQuery(
     FromSource Table,
+    EquatableList<JoinClause> Joins,
     EquatableList<(string Column, Expr Value)> Set,
     Expr? Where,
     EquatableList<SelectItem> Returning,

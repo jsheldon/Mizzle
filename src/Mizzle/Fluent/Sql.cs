@@ -28,6 +28,12 @@ public static class Sql
 
     public static BinaryExpr Or(params Expr[] conditions) => Fold(BinaryOp.Or, conditions);
 
+    /// <summary>Adds two expressions, e.g. for a guarded increment's SET value.</summary>
+    public static BinaryExpr Add(Expr left, Expr right) => new(BinaryOp.Add, left, right);
+
+    /// <summary>Subtracts the right expression from the left, e.g. for a guarded decrement.</summary>
+    public static BinaryExpr Subtract(Expr left, Expr right) => new(BinaryOp.Subtract, left, right);
+
     private static BinaryExpr Fold(BinaryOp op, Expr[] conditions)
     {
         if (conditions.Length < 2)
@@ -57,7 +63,7 @@ public static class Sql
     public static BinaryExpr Like(Expr left, Expr right) => new(BinaryOp.Like, left, right);
 
     /// <summary>An <c>IN</c> list test.</summary>
-    public static InExpr In(Expr needle, IReadOnlyList<Expr> haystack) => new(needle, [..haystack]);
+    public static InExpr In(Expr needle, IReadOnlyList<Expr> haystack) => new(needle, [.. haystack]);
 
     /// <summary>One arm of a <see cref="Case(CaseWhen[])"/>.</summary>
     public static CaseWhen When(Expr condition, Expr result) => new(condition, result);
@@ -80,7 +86,7 @@ public static class Sql
     /// <example><code>Sql.Case(Sql.When(c.Kind.Eq(504m), 0)).Else(Sql.Value(4))</code></example>
     public static CaseExpr Case(params CaseWhen[] whens)
         => whens.Length > 0
-            ? new CaseExpr([..whens])
+            ? new CaseExpr([.. whens])
             : throw new ArgumentException("A CASE needs at least one WHEN arm.", nameof(whens));
 
     /// <summary>
@@ -96,7 +102,7 @@ public static class Sql
     public static BetweenExpr Between(Expr value, Expr lo, Expr hi) => new(value, lo, hi);
 
     /// <summary>Returns the first non-null argument, as SQL <c>COALESCE</c>.</summary>
-    public static CoalesceExpr Coalesce(params Expr[] args) => new([..args]);
+    public static CoalesceExpr Coalesce(params Expr[] args) => new([.. args]);
 
     /// <summary>A <c>COUNT</c> aggregate.</summary>
     public static AggregateExpr Count() => new(AggregateKind.Count, null);

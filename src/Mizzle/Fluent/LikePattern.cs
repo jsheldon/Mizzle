@@ -21,17 +21,17 @@ public static class LikePattern
 
     private static string Escape(string text, char escape)
     {
-        var sb = new StringBuilder(text.Length);
+        var stringBuilder = new StringBuilder(text.Length);
         foreach (var ch in text)
         {
             if (ch == escape || ch == '%' || ch == '_')
             {
-                sb.Append(escape);
+                stringBuilder.Append(escape);
             }
 
-            sb.Append(ch);
+            stringBuilder.Append(ch);
         }
 
-        return sb.ToString();
+        return stringBuilder.ToString();
     }
 }

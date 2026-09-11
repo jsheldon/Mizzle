@@ -36,7 +36,15 @@ internal enum MapStatus
 
 internal sealed class TableColumnFact
 {
-    public TableColumnFact(string propertyName, string dbName, string clrTypeName, bool isRequired, string readerCall, string? readConverter = null, bool isUntrimmed = false, bool isAlwaysFilter = false)
+    public TableColumnFact(
+        string propertyName,
+        string dbName,
+        string clrTypeName,
+        bool isRequired,
+        string readerCall,
+        string? readConverter = null,
+        bool isUntrimmed = false,
+        bool isAlwaysFilter = false)
     {
         PropertyName = propertyName;
         DbName = dbName;
@@ -470,7 +478,11 @@ internal static class TableFacts
 
                     var value = literal.Token.ValueText;
                     var parameter = args[i].NameColon?.Name.Identifier.Text
-                        ?? i switch { 0 => "name", _ => "schema" };
+                        ?? i switch
+                        {
+                            0 => "name",
+                            _ => "schema"
+                        };
                     switch (parameter)
                     {
                         case "name":

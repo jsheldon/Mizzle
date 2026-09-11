@@ -239,219 +239,219 @@ internal static class BakedChainWalker
         var state = new WalkState(model);
         try
         {
-        for (var i = 0; i < calls.Count; i++)
-        {
-            var (name, invocation) = calls[i];
-            var args = invocation.ArgumentList.Arguments;
-            switch (name)
+            for (var i = 0; i < calls.Count; i++)
             {
-                case "Select" when i == 0 && args.Count > 0:
-                    foreach (var arg in args)
-                    {
-                        var item = state.ResolveColumn(arg.Expression)
-                            ?? state.ResolveSelectExpression(arg.Expression);
-                        if (item is null)
+                var (name, invocation) = calls[i];
+                var args = invocation.ArgumentList.Arguments;
+                switch (name)
+                {
+                    case "Select" when i == 0 && args.Count > 0:
+                        foreach (var arg in args)
+                        {
+                            var item = state.ResolveColumn(arg.Expression)
+                                ?? state.ResolveSelectExpression(arg.Expression);
+                            if (item is null)
+                            {
+                                return null;
+                            }
+
+                            state.Select.Add(item);
+                        }
+
+                        break;
+                    case "GroupBy" when args.Count > 0:
+                        foreach (var arg in args)
+                        {
+                            if (state.ResolveColumn(arg.Expression) is not { } grouped)
+                            {
+                                return null;
+                            }
+
+                            state.GroupBy.Add((grouped.TableAlias, grouped.DbName));
+                        }
+
+                        break;
+                    case "From" when args.Count == 1 && state.From is null:
+                        if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } fromTable)
                         {
                             return null;
                         }
 
-                        state.Select.Add(item);
-                    }
-
-                    break;
-                case "GroupBy" when args.Count > 0:
-                    foreach (var arg in args)
-                    {
-                        if (state.ResolveColumn(arg.Expression) is not { } grouped)
+                        state.From = fromTable;
+                        break;
+                    case "InnerJoin" or "LeftJoin" when args.Count == 1 && state.ResolveTable(args[0].Expression) is { } joinTable:
+                        // JoinBuilder form: the next chain call must be On(...)
+                        if (i + 1 >= calls.Count || calls[i + 1].Name != "On")
                         {
                             return null;
                         }
 
-                        state.GroupBy.Add((grouped.TableAlias, grouped.DbName));
-                    }
-
-                    break;
-                case "From" when args.Count == 1 && state.From is null:
-                    if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } fromTable)
-                    {
-                        return null;
-                    }
-
-                    state.From = fromTable;
-                    break;
-                case "InnerJoin" or "LeftJoin" when args.Count == 1 && state.ResolveTable(args[0].Expression) is { } joinTable:
-                    // JoinBuilder form: the next chain call must be On(...)
-                    if (i + 1 >= calls.Count || calls[i + 1].Name != "On")
-                    {
-                        return null;
-                    }
-
-                    var onArgs = calls[i + 1].Invocation.ArgumentList.Arguments;
-                    if (onArgs.Count == 0)
-                    {
-                        return null;
-                    }
-
-                    var conditions = new List<BakedCondition>();
-                    foreach (var onArg in onArgs)
-                    {
-                        if (state.ResolveCondition(onArg.Expression) is not { } condition)
+                        var onArgs = calls[i + 1].Invocation.ArgumentList.Arguments;
+                        if (onArgs.Count == 0)
                         {
                             return null;
                         }
 
-                        conditions.Add(condition);
-                    }
+                        var conditions = new List<BakedCondition>();
+                        foreach (var onArg in onArgs)
+                        {
+                            if (state.ResolveCondition(onArg.Expression) is not { } condition)
+                            {
+                                return null;
+                            }
 
-                    state.Joins.Add(new BakedJoin(name == "LeftJoin", joinTable, conditions));
-                    i++; // consume the On call
-                    break;
-                case "InnerJoin" or "LeftJoin" when args.Count == 2:
-                    if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } legacyTable)
-                    {
-                        return null;
-                    }
+                            conditions.Add(condition);
+                        }
 
-                    var legacyConditions = new List<BakedCondition>();
-                    if (!state.TryFlattenConditions(args[1].Expression, legacyConditions))
-                    {
-                        return null;
-                    }
-
-                    state.Joins.Add(new BakedJoin(name == "LeftJoin", legacyTable, legacyConditions));
-                    break;
-                case "Where" when args.Count == 2
-                    && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
-                    // "Column" matches the generic Where<T>(Column<T>, T) overload;
-                    // "IColumn" is kept in case a non-generic overload ever returns.
-                    && whereMethod.Parameters[0].Type.Name is "IColumn" or "Column":
-                    if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
-                    {
-                        return null;
-                    }
-
-                    state.Where.Add(new BakedCondition(whereColumn.TableAlias, whereColumn.DbName, null, null));
-                    break;
-                case "Where" when args.Count >= 1:
-                    foreach (var arg in args)
-                    {
-                        if (state.ResolveCondition(arg.Expression) is not { } condition)
+                        state.Joins.Add(new BakedJoin(name == "LeftJoin", joinTable, conditions));
+                        i++; // consume the On call
+                        break;
+                    case "InnerJoin" or "LeftJoin" when args.Count == 2:
+                        if (state.ResolveTable(Unwrap(args[0].Expression)) is not { } legacyTable)
                         {
                             return null;
                         }
 
-                        state.Where.Add(condition);
-                    }
+                        var legacyConditions = new List<BakedCondition>();
+                        if (!state.TryFlattenConditions(args[1].Expression, legacyConditions))
+                        {
+                            return null;
+                        }
 
-                    break;
-                case "OrderBy" or "OrderByDesc" when args.Count == 1:
-                    var orderExpr = args[0].Expression is InvocationExpressionSyntax
+                        state.Joins.Add(new BakedJoin(name == "LeftJoin", legacyTable, legacyConditions));
+                        break;
+                    case "Where" when args.Count == 2
+                        && model.GetSymbolInfo(invocation).Symbol is IMethodSymbol { Parameters.Length: 2 } whereMethod
+                        // "Column" matches the generic Where<T>(Column<T>, T) overload;
+                        // "IColumn" is kept in case a non-generic overload ever returns.
+                        && whereMethod.Parameters[0].Type.Name is "IColumn" or "Column":
+                        if (state.ResolveColumn(args[0].Expression) is not { } whereColumn)
+                        {
+                            return null;
+                        }
+
+                        state.Where.Add(new BakedCondition(whereColumn.TableAlias, whereColumn.DbName, null, null));
+                        break;
+                    case "Where" when args.Count >= 1:
+                        foreach (var arg in args)
+                        {
+                            if (state.ResolveCondition(arg.Expression) is not { } condition)
+                            {
+                                return null;
+                            }
+
+                            state.Where.Add(condition);
+                        }
+
+                        break;
+                    case "OrderBy" or "OrderByDesc" when args.Count == 1:
+                        var orderExpr = args[0].Expression is InvocationExpressionSyntax
                         {
                             Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "ToRef" } toRefMember
                         }
-                        ? toRefMember.Expression
-                        : args[0].Expression;
-                    if (state.ResolveColumn(orderExpr) is not { } orderColumn)
-                    {
-                        return null;
-                    }
+                            ? toRefMember.Expression
+                            : args[0].Expression;
+                        if (state.ResolveColumn(orderExpr) is not { } orderColumn)
+                        {
+                            return null;
+                        }
 
-                    state.OrderBy.Add((orderColumn.TableAlias, orderColumn.DbName, name == "OrderByDesc"));
-                    break;
-                case "Limit" when args.Count == 1 && state.Limit is null && TryIntLiteral(args[0].Expression, out var limitValue):
-                    state.Limit = limitValue;
-                    break;
-                case "Offset" when args.Count == 1 && state.Offset is null && TryIntLiteral(args[0].Expression, out var offsetValue):
-                    state.Offset = offsetValue;
-                    break;
-                case "Page" when args.Count == 2
-                    && state.Limit is null
-                    && state.Offset is null
-                    && TryIntLiteral(args[0].Expression, out var page)
-                    && TryIntLiteral(args[1].Expression, out var pageSize)
-                    && page >= 1:
-                    state.Limit = pageSize;
-                    state.Offset = (page - 1) * pageSize;
-                    break;
-                case "With" or "WithRecursive" when args.Count == 1:
-                    if (state.ResolveCte(args[0].Expression) is not { } cte)
-                    {
-                        return null;
-                    }
+                        state.OrderBy.Add((orderColumn.TableAlias, orderColumn.DbName, name == "OrderByDesc"));
+                        break;
+                    case "Limit" when args.Count == 1 && state.Limit is null && TryIntLiteral(args[0].Expression, out var limitValue):
+                        state.Limit = limitValue;
+                        break;
+                    case "Offset" when args.Count == 1 && state.Offset is null && TryIntLiteral(args[0].Expression, out var offsetValue):
+                        state.Offset = offsetValue;
+                        break;
+                    case "Page" when args.Count == 2
+                        && state.Limit is null
+                        && state.Offset is null
+                        && TryIntLiteral(args[0].Expression, out var page)
+                        && TryIntLiteral(args[1].Expression, out var pageSize)
+                        && page >= 1:
+                        state.Limit = pageSize;
+                        state.Offset = (page - 1) * pageSize;
+                        break;
+                    case "With" or "WithRecursive" when args.Count == 1:
+                        if (state.ResolveCte(args[0].Expression) is not { } cte)
+                        {
+                            return null;
+                        }
 
-                    state.With.Add(cte);
-                    state.RecursiveWith |= name == "WithRecursive";
-                    break;
-                case "WhereIf" when args.Count == 2:
-                    if (state.ResolveCondition(args[1].Expression) is not { } conditional)
-                    {
-                        return null;
-                    }
+                        state.With.Add(cte);
+                        state.RecursiveWith |= name == "WithRecursive";
+                        break;
+                    case "WhereIf" when args.Count == 2:
+                        if (state.ResolveCondition(args[1].Expression) is not { } conditional)
+                        {
+                            return null;
+                        }
 
-                    state.Where.Add(conditional.WithConditionalIndex(state.ConditionalCount));
-                    state.ConditionalCount++;
-                    break;
-                case "Having" when args.Count == 1:
-                    if (state.ResolveHavingCondition(args[0].Expression) is not { } having)
-                    {
-                        return null;
-                    }
+                        state.Where.Add(conditional.WithConditionalIndex(state.ConditionalCount));
+                        state.ConditionalCount++;
+                        break;
+                    case "Having" when args.Count == 1:
+                        if (state.ResolveHavingCondition(args[0].Expression) is not { } having)
+                        {
+                            return null;
+                        }
 
-                    state.Having.Add(having);
-                    break;
-                case "UnionAll" when args.Count == 1:
-                    if (state.ResolveUnionBranch(args[0].Expression) is not { } branch)
-                    {
-                        return null;
-                    }
+                        state.Having.Add(having);
+                        break;
+                    case "UnionAll" when args.Count == 1:
+                        if (state.ResolveUnionBranch(args[0].Expression) is not { } branch)
+                        {
+                            return null;
+                        }
 
-                    state.UnionAll.Add(branch);
-                    break;
-                case "Distinct" when args.Count == 0:
-                    state.Distinct = true;
-                    break;
-                default:
-                    return null;
+                        state.UnionAll.Add(branch);
+                        break;
+                    case "Distinct" when args.Count == 0:
+                        state.Distinct = true;
+                        break;
+                    default:
+                        return null;
+                }
             }
-        }
 
-        if (state.From is null
-            || state.Select.Count == 0
-            || state.ConditionalCount > BakedSqlEmitter.MaxBakedConditionals)
-        {
-            return null;
-        }
+            if (state.From is null
+                || state.Select.Count == 0
+                || state.ConditionalCount > BakedSqlEmitter.MaxBakedConditionals)
+            {
+                return null;
+            }
 
-        // Every referenced table must share the receiver's dialect.
-        if (state.Tables.Values.Any(t => t.IsPostgres != isPostgres.Value))
-        {
-            return null;
-        }
+            // Every referenced table must share the receiver's dialect.
+            if (state.Tables.Values.Any(t => t.IsPostgres != isPostgres.Value))
+            {
+                return null;
+            }
 
-        // Left-joined tables' columns are nullable in the projection.
-        var leftAliases = new HashSet<string>(state.Joins.Where(j => j.IsLeft).Select(j => j.Table.Alias));
-        var select = state.Select
-            .Select(c => leftAliases.Contains(c.TableAlias)
-                ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall, c.ReadConverter, c.ProjectionName, c.IsUntrimmed)
-                : c)
-            .ToList();
+            // Left-joined tables' columns are nullable in the projection.
+            var leftAliases = new HashSet<string>(state.Joins.Where(j => j.IsLeft).Select(j => j.Table.Alias));
+            var select = state.Select
+                .Select(c => leftAliases.Contains(c.TableAlias)
+                    ? new BakedColumn(c.TableAlias, c.DbName, c.PropertyName, c.ClrTypeName, false, c.ReaderCall, c.ReadConverter, c.ProjectionName, c.IsUntrimmed)
+                    : c)
+                .ToList();
 
-        return new BakedQuerySpec(
-            isPostgres.Value,
-            state.From,
-            state.Joins,
-            select,
-            state.Distinct,
-            state.Where,
-            state.OrderBy,
-            state.Limit,
-            state.Offset,
-            state.With,
-            state.RecursiveWith,
-            state.GroupBy,
-            state.Having,
-            state.UnionAll,
-            state.ConditionalCount);
+            return new BakedQuerySpec(
+                isPostgres.Value,
+                state.From,
+                state.Joins,
+                select,
+                state.Distinct,
+                state.Where,
+                state.OrderBy,
+                state.Limit,
+                state.Offset,
+                state.With,
+                state.RecursiveWith,
+                state.GroupBy,
+                state.Having,
+                state.UnionAll,
+                state.ConditionalCount);
         }
         finally
         {
@@ -556,9 +556,9 @@ internal static class BakedChainWalker
 
     private static ExpressionSyntax Unwrap(ExpressionSyntax expression)
         => expression is InvocationExpressionSyntax
-            {
-                Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "ToFrom" } member
-            }
+        {
+            Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "ToFrom" } member
+        }
             ? member.Expression
             : expression;
 

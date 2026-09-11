@@ -15,7 +15,7 @@ public sealed class SqlDb : IQueryExecutor
     private readonly MizzleOptions _options;
     private readonly SqlServerEmitter _emitter = new();
     private readonly ConcurrentDictionary<Query, string> _sqlCache = new();
-    private readonly AsyncLocal<SqlTx?> _ambient = new();
+    private readonly AsyncLocal<SqlServerTransaction?> _ambientTransaction = new();
 
     public SqlDb(SqlDataSource dataSource, MizzleOptions? options = null)
     {
@@ -40,9 +40,9 @@ public sealed class SqlDb : IQueryExecutor
         => new(table, this);
 
     public Task Transaction(Func<IMizzleTransaction, Task> body, CancellationToken cancellationToken = default)
-        => Transaction(async tx =>
+        => Transaction(async transaction =>
         {
-            await body(tx);
+            await body(transaction);
             return 0;
         }, cancellationToken);
 
@@ -50,31 +50,31 @@ public sealed class SqlDb : IQueryExecutor
         Func<IMizzleTransaction, Task<T>> body,
         CancellationToken cancellationToken = default)
     {
-        if (_ambient.Value is { } current)
+        if (_ambientTransaction.Value is { } current)
         {
             return await current.AtSavepoint(body, cancellationToken);
         }
 
-        var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        var tx = (SqlTransaction)await conn.BeginTransactionAsync(cancellationToken);
-        var scope = new SqlTx(this, conn, tx, depth: 0);
-        _ambient.Value = scope;
+        var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var scope = new SqlServerTransaction(this, connection, transaction, depth: 0);
+        _ambientTransaction.Value = scope;
         try
         {
             var result = await body(scope);
-            await tx.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return result;
         }
         catch
         {
-            await tx.RollbackAsync(cancellationToken);
+            await transaction.RollbackAsync(cancellationToken);
             throw;
         }
         finally
         {
-            _ambient.Value = null;
-            await tx.DisposeAsync();
-            await conn.DisposeAsync();
+            _ambientTransaction.Value = null;
+            await transaction.DisposeAsync();
+            await connection.DisposeAsync();
         }
     }
 
@@ -100,15 +100,15 @@ public sealed class SqlDb : IQueryExecutor
         CancellationToken cancellationToken)
     {
         var (sql, values) = Compile(query);
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            return await cmd.ExecuteNonQueryAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            return await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        return await outer.ExecuteNonQueryAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        return await standaloneCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async IAsyncEnumerable<T> StreamAsync<T>(
@@ -119,10 +119,10 @@ public sealed class SqlDb : IQueryExecutor
     {
         EnsureCompiledQuery();
         var (sql, values) = Compile(query);
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 yield return map(reader);
@@ -131,9 +131,9 @@ public sealed class SqlDb : IQueryExecutor
             yield break;
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        await using var outerReader = await outer.ExecuteReaderAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        await using var outerReader = await standaloneCommand.ExecuteReaderAsync(cancellationToken);
         while (await outerReader.ReadAsync(cancellationToken))
         {
             yield return map(outerReader);
@@ -149,10 +149,10 @@ public sealed class SqlDb : IQueryExecutor
     {
         var (_, values) = Parameterizer.Run(query);
         var rows = new List<T>();
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 rows.Add(map(reader));
@@ -161,9 +161,9 @@ public sealed class SqlDb : IQueryExecutor
             return rows;
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        await using var outerReader = await outer.ExecuteReaderAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        await using var outerReader = await standaloneCommand.ExecuteReaderAsync(cancellationToken);
         while (await outerReader.ReadAsync(cancellationToken))
         {
             rows.Add(map(outerReader));
@@ -191,17 +191,17 @@ public sealed class SqlDb : IQueryExecutor
         QueryOptions? overlay,
         SqlTransaction? transaction)
     {
-        var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.Transaction = transaction;
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Transaction = transaction;
         var timeout = overlay?.CommandTimeout ?? _options.CommandTimeout;
-        cmd.CommandTimeout = (int)Math.Ceiling(timeout.TotalSeconds);
+        command.CommandTimeout = (int)Math.Ceiling(timeout.TotalSeconds);
         for (var i = 0; i < values.Count; i++)
         {
-            cmd.Parameters.Add(new SqlParameter($"@p{i}", values[i] ?? DBNull.Value));
+            command.Parameters.Add(new SqlParameter($"@p{i}", values[i] ?? DBNull.Value));
         }
 
-        return cmd;
+        return command;
     }
 
     private void EnsureCompiledQuery()
@@ -212,17 +212,17 @@ public sealed class SqlDb : IQueryExecutor
         }
     }
 
-    private sealed class SqlTx : IMizzleTransaction
+    private sealed class SqlServerTransaction : IMizzleTransaction
     {
-        private readonly SqlDb _db;
-        private int _depth;
+        private readonly SqlDb _database;
+        private int _savepointSequence;
 
-        public SqlTx(SqlDb db, SqlConnection connection, SqlTransaction transaction, int depth)
+        public SqlServerTransaction(SqlDb db, SqlConnection connection, SqlTransaction transaction, int depth)
         {
-            _db = db;
+            _database = db;
             Connection = connection;
             DbTransaction = transaction;
-            _depth = depth;
+            _savepointSequence = depth;
         }
 
         public SqlConnection Connection { get; }
@@ -230,13 +230,13 @@ public sealed class SqlDb : IQueryExecutor
 
         public async Task<T> AtSavepoint<T>(Func<IMizzleTransaction, Task<T>> body, CancellationToken cancellationToken)
         {
-            _depth++;
-            var name = $"mizzle_sp_{_depth}";
-            await using (var cmd = Connection.CreateCommand())
+            _savepointSequence++;
+            var name = $"mizzle_sp_{_savepointSequence}";
+            await using (var command = Connection.CreateCommand())
             {
-                cmd.Transaction = DbTransaction;
-                cmd.CommandText = $"SAVE TRANSACTION {name}";
-                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                command.Transaction = DbTransaction;
+                command.CommandText = $"SAVE TRANSACTION {name}";
+                await command.ExecuteNonQueryAsync(cancellationToken);
             }
 
             try
@@ -258,20 +258,20 @@ public sealed class SqlDb : IQueryExecutor
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.QueryAsync(query, map, overlay, cancellationToken);
+            => _database.QueryAsync(query, map, overlay, cancellationToken);
 
         public Task<int> ExecuteAsync(
             Query query,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.ExecuteAsync(query, overlay, cancellationToken);
+            => _database.ExecuteAsync(query, overlay, cancellationToken);
 
         public IAsyncEnumerable<T> StreamAsync<T>(
             Query query,
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.StreamAsync(query, map, overlay, cancellationToken);
+            => _database.StreamAsync(query, map, overlay, cancellationToken);
 
         public Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(
             string sql,
@@ -279,10 +279,10 @@ public sealed class SqlDb : IQueryExecutor
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.QueryPrecompiledAsync(sql, query, map, overlay, cancellationToken);
+            => _database.QueryPrecompiledAsync(sql, query, map, overlay, cancellationToken);
 
         public Task LockAsync(string resource, CancellationToken cancellationToken = default)
-            => SqlLock.AcquireAsync(_db, resource, cancellationToken);
+            => SqlLock.AcquireAsync(_database, resource, cancellationToken);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

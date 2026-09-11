@@ -15,7 +15,7 @@ public sealed class PostgresDb : IQueryExecutor
     private readonly MizzleOptions _options;
     private readonly PgEmitter _emitter = new();
     private readonly ConcurrentDictionary<Query, string> _sqlCache = new();
-    private readonly AsyncLocal<PostgresTx?> _ambient = new();
+    private readonly AsyncLocal<PostgresTransaction?> _ambientTransaction = new();
 
     public PostgresDb(NpgsqlDataSource dataSource, MizzleOptions? options = null)
     {
@@ -40,9 +40,9 @@ public sealed class PostgresDb : IQueryExecutor
         => new(table, this);
 
     public Task Transaction(Func<IMizzleTransaction, Task> body, CancellationToken cancellationToken = default)
-        => Transaction(async tx =>
+        => Transaction(async transaction =>
         {
-            await body(tx);
+            await body(transaction);
             return 0;
         }, cancellationToken);
 
@@ -50,31 +50,31 @@ public sealed class PostgresDb : IQueryExecutor
         Func<IMizzleTransaction, Task<T>> body,
         CancellationToken cancellationToken = default)
     {
-        if (_ambient.Value is { } current)
+        if (_ambientTransaction.Value is { } current)
         {
             return await current.AtSavepoint(body, cancellationToken);
         }
 
-        var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        var tx = await conn.BeginTransactionAsync(cancellationToken);
-        var scope = new PostgresTx(this, conn, tx, depth: 0);
-        _ambient.Value = scope;
+        var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var scope = new PostgresTransaction(this, connection, transaction, depth: 0);
+        _ambientTransaction.Value = scope;
         try
         {
             var result = await body(scope);
-            await tx.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return result;
         }
         catch
         {
-            await tx.RollbackAsync(cancellationToken);
+            await transaction.RollbackAsync(cancellationToken);
             throw;
         }
         finally
         {
-            _ambient.Value = null;
-            await tx.DisposeAsync();
-            await conn.DisposeAsync();
+            _ambientTransaction.Value = null;
+            await transaction.DisposeAsync();
+            await connection.DisposeAsync();
         }
     }
 
@@ -100,15 +100,15 @@ public sealed class PostgresDb : IQueryExecutor
         CancellationToken cancellationToken)
     {
         var (sql, values) = Compile(query);
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            return await cmd.ExecuteNonQueryAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            return await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        return await outer.ExecuteNonQueryAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        return await standaloneCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async IAsyncEnumerable<T> StreamAsync<T>(
@@ -119,10 +119,10 @@ public sealed class PostgresDb : IQueryExecutor
     {
         EnsureCompiledQuery();
         var (sql, values) = Compile(query);
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 yield return map(reader);
@@ -131,9 +131,9 @@ public sealed class PostgresDb : IQueryExecutor
             yield break;
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        await using var outerReader = await outer.ExecuteReaderAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        await using var outerReader = await standaloneCommand.ExecuteReaderAsync(cancellationToken);
         while (await outerReader.ReadAsync(cancellationToken))
         {
             yield return map(outerReader);
@@ -149,10 +149,10 @@ public sealed class PostgresDb : IQueryExecutor
     {
         var (_, values) = Parameterizer.Run(query);
         var rows = new List<T>();
-        if (_ambient.Value is { } ambient)
+        if (_ambientTransaction.Value is { } ambient)
         {
-            await using var cmd = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+            await using var command = CreateCommand(ambient.Connection, sql, values, overlay, ambient.DbTransaction);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
                 rows.Add(map(reader));
@@ -161,9 +161,9 @@ public sealed class PostgresDb : IQueryExecutor
             return rows;
         }
 
-        await using var conn = await _dataSource.OpenConnectionAsync(cancellationToken);
-        await using var outer = CreateCommand(conn, sql, values, overlay, transaction: null);
-        await using var outerReader = await outer.ExecuteReaderAsync(cancellationToken);
+        await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+        await using var standaloneCommand = CreateCommand(connection, sql, values, overlay, transaction: null);
+        await using var outerReader = await standaloneCommand.ExecuteReaderAsync(cancellationToken);
         while (await outerReader.ReadAsync(cancellationToken))
         {
             rows.Add(map(outerReader));
@@ -191,17 +191,17 @@ public sealed class PostgresDb : IQueryExecutor
         QueryOptions? overlay,
         NpgsqlTransaction? transaction)
     {
-        var cmd = connection.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.Transaction = transaction;
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.Transaction = transaction;
         var timeout = overlay?.CommandTimeout ?? _options.CommandTimeout;
-        cmd.CommandTimeout = (int)Math.Ceiling(timeout.TotalSeconds);
+        command.CommandTimeout = (int)Math.Ceiling(timeout.TotalSeconds);
         foreach (var value in values)
         {
-            cmd.Parameters.Add(new NpgsqlParameter { Value = value ?? DBNull.Value });
+            command.Parameters.Add(new NpgsqlParameter { Value = value ?? DBNull.Value });
         }
 
-        return cmd;
+        return command;
     }
 
     private void EnsureCompiledQuery()
@@ -212,17 +212,17 @@ public sealed class PostgresDb : IQueryExecutor
         }
     }
 
-    private sealed class PostgresTx : IMizzleTransaction
+    private sealed class PostgresTransaction : IMizzleTransaction
     {
-        private readonly PostgresDb _db;
-        private int _depth;
+        private readonly PostgresDb _database;
+        private int _savepointSequence;
 
-        public PostgresTx(PostgresDb db, NpgsqlConnection connection, NpgsqlTransaction transaction, int depth)
+        public PostgresTransaction(PostgresDb db, NpgsqlConnection connection, NpgsqlTransaction transaction, int depth)
         {
-            _db = db;
+            _database = db;
             Connection = connection;
             DbTransaction = transaction;
-            _depth = depth;
+            _savepointSequence = depth;
         }
 
         public NpgsqlConnection Connection { get; }
@@ -230,13 +230,13 @@ public sealed class PostgresDb : IQueryExecutor
 
         public async Task<T> AtSavepoint<T>(Func<IMizzleTransaction, Task<T>> body, CancellationToken cancellationToken)
         {
-            _depth++;
-            var name = $"mizzle_sp_{_depth}";
-            await using (var cmd = Connection.CreateCommand())
+            _savepointSequence++;
+            var name = $"mizzle_sp_{_savepointSequence}";
+            await using (var command = Connection.CreateCommand())
             {
-                cmd.Transaction = DbTransaction;
-                cmd.CommandText = $"SAVEPOINT {name}";
-                await cmd.ExecuteNonQueryAsync(cancellationToken);
+                command.Transaction = DbTransaction;
+                command.CommandText = $"SAVEPOINT {name}";
+                await command.ExecuteNonQueryAsync(cancellationToken);
             }
 
             try
@@ -266,20 +266,20 @@ public sealed class PostgresDb : IQueryExecutor
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.QueryAsync(query, map, overlay, cancellationToken);
+            => _database.QueryAsync(query, map, overlay, cancellationToken);
 
         public Task<int> ExecuteAsync(
             Query query,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.ExecuteAsync(query, overlay, cancellationToken);
+            => _database.ExecuteAsync(query, overlay, cancellationToken);
 
         public IAsyncEnumerable<T> StreamAsync<T>(
             Query query,
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.StreamAsync(query, map, overlay, cancellationToken);
+            => _database.StreamAsync(query, map, overlay, cancellationToken);
 
         public Task<IReadOnlyList<T>> QueryPrecompiledAsync<T>(
             string sql,
@@ -287,10 +287,10 @@ public sealed class PostgresDb : IQueryExecutor
             Func<DbDataReader, T> map,
             QueryOptions? overlay,
             CancellationToken cancellationToken)
-            => _db.QueryPrecompiledAsync(sql, query, map, overlay, cancellationToken);
+            => _database.QueryPrecompiledAsync(sql, query, map, overlay, cancellationToken);
 
         public Task LockAsync(string resource, CancellationToken cancellationToken = default)
-            => PgLock.AcquireAsync(_db, resource, cancellationToken);
+            => PgLock.AcquireAsync(_database, resource, cancellationToken);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

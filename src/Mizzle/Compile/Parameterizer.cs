@@ -9,7 +9,7 @@ namespace Mizzle.Compile;
 // select: With CTEs -> select items -> joins (On, in order) -> where ->
 // group by -> having -> order by -> union-all members;
 // insert: With -> values rows (row-major) -> from-select -> returning;
-// update: With -> set values -> where -> returning;
+// update: With -> set values -> joins (On, in order) -> where -> returning;
 // delete: With -> where -> returning.
 public static class Parameterizer
 {
@@ -29,14 +29,15 @@ public static class Parameterizer
             InsertQuery insert => insert with
             {
                 With = RewriteCtes(insert.With),
-                ValuesRows = [..insert.ValuesRows.Select(row => new EquatableList<Expr>(row.Select(Rewrite)))],
+                ValuesRows = [.. insert.ValuesRows.Select(row => new EquatableList<Expr>(row.Select(Rewrite)))],
                 FromSelect = insert.FromSelect is null ? null : RewriteSelect(insert.FromSelect),
                 Returning = RewriteItems(insert.Returning)
             },
             UpdateQuery update => update with
             {
                 With = RewriteCtes(update.With),
-                Set = [..update.Set.Select(s => (s.Column, Rewrite(s.Value)))],
+                Set = [.. update.Set.Select(s => (s.Column, Rewrite(s.Value)))],
+                Joins = [.. update.Joins.Select(j => j with { On = Rewrite(j.On) })],
                 Where = update.Where is null ? null : Rewrite(update.Where),
                 Returning = RewriteItems(update.Returning)
             },
@@ -53,19 +54,19 @@ public static class Parameterizer
         {
             With = RewriteCtes(select.With),
             Select = RewriteItems(select.Select),
-            Joins = [..select.Joins.Select(j => j with { On = Rewrite(j.On) })],
+            Joins = [.. select.Joins.Select(j => j with { On = Rewrite(j.On) })],
             Where = select.Where is null ? null : Rewrite(select.Where),
             GroupBy = select.GroupBy is null ? null : new EquatableList<Expr>(select.GroupBy.Select(Rewrite)),
             Having = select.Having is null ? null : Rewrite(select.Having),
-            OrderBy = [..select.OrderBy.Select(o => o with { Expr = Rewrite(o.Expr) })],
-            UnionAll = [..select.UnionAll.Select(RewriteSelect)]
+            OrderBy = [.. select.OrderBy.Select(o => o with { Expr = Rewrite(o.Expr) })],
+            UnionAll = [.. select.UnionAll.Select(RewriteSelect)]
         };
 
         private EquatableList<CteClause> RewriteCtes(EquatableList<CteClause> with)
-            => [..with.Select(cte => cte with { Query = RewriteSelect(cte.Query) })];
+            => [.. with.Select(cte => cte with { Query = RewriteSelect(cte.Query) })];
 
         private EquatableList<SelectItem> RewriteItems(EquatableList<SelectItem> items)
-            => [..items.Select(item => item with { Expr = Rewrite(item.Expr) })];
+            => [.. items.Select(item => item with { Expr = Rewrite(item.Expr) })];
 
         private Expr Rewrite(Expr expr) => expr switch
         {
@@ -73,13 +74,13 @@ public static class Parameterizer
             ParamRef => throw new InvalidOperationException(
                 "Query already contains parameter slots; parameterization must run exactly once."),
             ColumnRef => expr,
-            BinaryExpr bin => bin with { Left = Rewrite(bin.Left), Right = Rewrite(bin.Right) },
+            BinaryExpr binary => binary with { Left = Rewrite(binary.Left), Right = Rewrite(binary.Right) },
             LikeExpr like => like with { Left = Rewrite(like.Left), Right = Rewrite(like.Right) },
             UnaryExpr unary => unary with { Operand = Rewrite(unary.Operand) },
-            InExpr inn => inn with
+            InExpr inExpression => inExpression with
             {
-                Needle = Rewrite(inn.Needle),
-                Haystack = [..inn.Haystack.Select(Rewrite)]
+                Needle = Rewrite(inExpression.Needle),
+                Haystack = [.. inExpression.Haystack.Select(Rewrite)]
             },
             BetweenExpr between => between with
             {
@@ -87,9 +88,9 @@ public static class Parameterizer
                 Lo = Rewrite(between.Lo),
                 Hi = Rewrite(between.Hi)
             },
-            CoalesceExpr coalesce => coalesce with { Args = [..coalesce.Args.Select(Rewrite)] },
-            AggregateExpr agg => agg with { Arg = agg.Arg is null ? null : Rewrite(agg.Arg) },
-            CallExpr call => call with { Args = [..call.Args.Select(Rewrite)] },
+            CoalesceExpr coalesce => coalesce with { Args = [.. coalesce.Args.Select(Rewrite)] },
+            AggregateExpr aggregate => aggregate with { Arg = aggregate.Arg is null ? null : Rewrite(aggregate.Arg) },
+            CallExpr call => call with { Args = [.. call.Args.Select(Rewrite)] },
             ConvertExpr convert => convert with { Value = Rewrite(convert.Value) },
             // Arm order is the emitted order, so the slots line up with the text.
             CaseExpr @case => @case with
@@ -103,8 +104,8 @@ public static class Parameterizer
             },
             RowNumberExpr rowNumber => rowNumber with
             {
-                PartitionColumns = [..rowNumber.PartitionColumns.Select(Rewrite)],
-                OrderColumns = [..rowNumber.OrderColumns.Select(o => o with { Expr = Rewrite(o.Expr) })]
+                PartitionColumns = [.. rowNumber.PartitionColumns.Select(Rewrite)],
+                OrderColumns = [.. rowNumber.OrderColumns.Select(o => o with { Expr = Rewrite(o.Expr) })]
             },
             _ => expr
         };

@@ -7,20 +7,20 @@ namespace Mizzle.Fluent;
 
 public sealed class SelectBuilder
 {
-    private readonly EquatableList<SelectItem> _select;
-    private readonly FromSource? _from;
+    private readonly EquatableList<SelectItem> _selectItems;
+    private readonly FromSource? _fromSource;
     private readonly EquatableList<JoinClause> _joins;
-    private readonly Expr? _where;
+    private readonly Expr? _wherePredicate;
     private readonly EquatableList<OrderByItem> _orderBy;
     private readonly int? _limit;
     private readonly int? _offset;
-    private readonly bool _distinct;
-    private readonly EquatableList<CteClause> _with;
-    private readonly bool _recursiveWith;
-    private readonly EquatableList<SelectQuery> _unionAll;
+    private readonly bool _isDistinct;
+    private readonly EquatableList<CteClause> _commonTableExpressions;
+    private readonly bool _hasRecursiveCte;
+    private readonly EquatableList<SelectQuery> _unionAllQueries;
     private readonly EquatableList<Expr> _groupBy;
-    private readonly Expr? _having;
-    private readonly int _conditionalCount;
+    private readonly Expr? _havingPredicate;
+    private readonly int _conditionalPredicateCount;
 
     private readonly IQueryExecutor? _executor;
 
@@ -50,20 +50,20 @@ public sealed class SelectBuilder
     {
         _executor = executor;
         Overlay = overlay;
-        _select = select;
-        _from = from;
+        _selectItems = select;
+        _fromSource = from;
         _joins = joins;
-        _where = where;
+        _wherePredicate = where;
         _orderBy = orderBy;
         _limit = limit;
         _offset = offset;
-        _distinct = distinct;
-        _with = with;
-        _recursiveWith = recursiveWith;
-        _unionAll = unionAll;
+        _isDistinct = distinct;
+        _commonTableExpressions = with;
+        _hasRecursiveCte = recursiveWith;
+        _unionAllQueries = unionAll;
         _groupBy = groupBy;
-        _having = having;
-        _conditionalCount = conditionalCount;
+        _havingPredicate = having;
+        _conditionalPredicateCount = conditionalCount;
         ConditionalMask = conditionalMask;
     }
 
@@ -84,33 +84,33 @@ public sealed class SelectBuilder
     /// <example>
     ///     <code>db.Select(o.CustomerId, Sql.Count().As("Orders")).From(o).GroupBy(o.CustomerId)</code>
     /// </example>
-    public SelectBuilder Select(params SelectItem[] items) => Copy(select: [..items]);
+    public SelectBuilder Select(params SelectItem[] items) => Copy(select: [.. items]);
 
     /// <summary>
     ///     Groups the result by the given expressions. A column converts to
     ///     <c>Expr</c> implicitly, so it mixes freely with a computed expression.
     /// </summary>
-    public SelectBuilder GroupBy(params Expr[] expressions) => Copy(groupBy: [.._groupBy, ..expressions]);
+    public SelectBuilder GroupBy(params Expr[] expressions) => Copy(groupBy: [.. _groupBy, .. expressions]);
 
     /// <summary>
     ///     Filters grouped rows. Repeated calls combine with <c>AND</c>, matching
     ///     <see cref="Where(Expr)"/>.
     /// </summary>
     public SelectBuilder Having(Expr expr)
-        => Copy(having: _having is null ? expr : Sql.And(_having, expr));
+        => Copy(having: _havingPredicate is null ? expr : Sql.And(_havingPredicate, expr));
 
     /// <summary>Appends a <c>UNION ALL</c> branch.</summary>
     public SelectBuilder UnionAll(SelectBuilder other) => UnionAll(other.Build());
 
     /// <summary>Appends a <c>UNION ALL</c> branch.</summary>
-    public SelectBuilder UnionAll(SelectQuery other) => Copy(unionAll: [.._unionAll, other]);
+    public SelectBuilder UnionAll(SelectQuery other) => Copy(unionAll: [.. _unionAllQueries, other]);
 
     public SelectBuilder From(FromSource from) => Copy(from: from);
 
     public SelectBuilder From(ITable table) => From(table.ToFrom());
 
     public SelectBuilder Where(Expr expr)
-        => Copy(where: _where is null ? expr : Sql.And(_where, expr));
+        => Copy(where: _wherePredicate is null ? expr : Sql.And(_wherePredicate, expr));
 
     // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
     // value no longer compiles instead of failing only at the database.
@@ -129,7 +129,7 @@ public sealed class SelectBuilder
     /// </remarks>
     public SelectBuilder WhereIf(bool condition, Expr predicate)
     {
-        var index = _conditionalCount;
+        var index = _conditionalPredicateCount;
         var mask = condition ? ConditionalMask | (1UL << index) : ConditionalMask;
         var applied = condition ? Where(predicate) : this;
         return applied.Copy(conditionalCount: index + 1, conditionalMask: mask);
@@ -146,14 +146,14 @@ public sealed class SelectBuilder
     public SelectBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
     public SelectBuilder InnerJoin(FromSource target, Expr on)
-        => Copy(joins: [.._joins, new JoinClause(JoinKind.Inner, target, on)]);
+        => Copy(joins: [.. _joins, new JoinClause(JoinKind.Inner, target, on)]);
 
     public SelectBuilder InnerJoin(ITable target, Expr on) => InnerJoin(target.ToFrom(), on);
 
     public JoinBuilder InnerJoin(ITable target) => new(this, JoinKind.Inner, target.ToFrom());
 
     public SelectBuilder LeftJoin(FromSource target, Expr on)
-        => Copy(joins: [.._joins, new JoinClause(JoinKind.Left, target, on)]);
+        => Copy(joins: [.. _joins, new JoinClause(JoinKind.Left, target, on)]);
 
     public SelectBuilder LeftJoin(ITable target, Expr on) => LeftJoin(target.ToFrom(), on);
 
@@ -162,10 +162,10 @@ public sealed class SelectBuilder
     // A column converts to Expr implicitly, so this one overload also covers a
     // bare column -- a dedicated IColumn overload would now be ambiguous with it.
     public SelectBuilder OrderBy(Expr expr)
-        => Copy(orderBy: [.._orderBy, new OrderByItem(expr, false)]);
+        => Copy(orderBy: [.. _orderBy, new OrderByItem(expr, false)]);
 
     public SelectBuilder OrderByDesc(Expr expr)
-        => Copy(orderBy: [.._orderBy, new OrderByItem(expr, true)]);
+        => Copy(orderBy: [.. _orderBy, new OrderByItem(expr, true)]);
 
     public SelectBuilder Distinct() => Copy(distinct: true);
 
@@ -173,13 +173,13 @@ public sealed class SelectBuilder
     ///     Prefixes the query with a common table expression. A CTE whose body is a
     ///     statically visible chain is baked along with the outer query.
     /// </summary>
-    public SelectBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+    public SelectBuilder With(CteClause cte) => Copy(with: [.. _commonTableExpressions, cte]);
 
     /// <summary>
     ///     Prefixes the query with a <c>WITH RECURSIVE</c> common table expression.
     /// </summary>
     public SelectBuilder WithRecursive(CteClause cte)
-        => Copy(with: [.._with, cte], recursiveWith: true);
+        => Copy(with: [.. _commonTableExpressions, cte], recursiveWith: true);
 
     public SelectBuilder Limit(int count) => Copy(limit: count);
 
@@ -260,30 +260,30 @@ public sealed class SelectBuilder
         // normal bound predicate rather than a special empty-result code path.
         seek ??= new BinaryExpr(BinaryOp.Eq, new ValueExpr(1, typeof(int)), new ValueExpr(0, typeof(int)));
 
-        return Copy(where: _where is null ? seek : Sql.And(_where, seek));
+        return Copy(where: _wherePredicate is null ? seek : Sql.And(_wherePredicate, seek));
     }
 
     public SelectQuery Build()
     {
-        if (_from is null)
+        if (_fromSource is null)
         {
             throw new InvalidOperationException("FROM is required.");
         }
 
         return new SelectQuery(
-            _select,
-            _from,
+            _selectItems,
+            _fromSource,
             _joins,
-            _where,
+            _wherePredicate,
             _orderBy,
             _limit,
             _offset,
-            _distinct,
-            _with,
-            _recursiveWith,
-            _unionAll,
+            _isDistinct,
+            _commonTableExpressions,
+            _hasRecursiveCte,
+            _unionAllQueries,
             _groupBy.Count == 0 ? null : _groupBy,
-            _having);
+            _havingPredicate);
     }
 
     public Task<IReadOnlyList<T>> ToListAsync<T>(
@@ -409,7 +409,11 @@ public sealed class SelectBuilder
             throw new InvalidOperationException("Page size is required. Call Page or Limit first.");
         }
 
-        var fetch = query with { Limit = pageSize + 1, WindowCount = includeTotal };
+        var fetch = query with
+        {
+            Limit = pageSize + 1,
+            WindowCount = includeTotal
+        };
         int? total = null;
         var rows = await Executor().QueryAsync(
             fetch,
@@ -426,7 +430,7 @@ public sealed class SelectBuilder
             cancellationToken);
 
         var hasMore = rows.Count > pageSize;
-        IReadOnlyList<T> items = hasMore ? [..rows.Take(pageSize)] : rows;
+        IReadOnlyList<T> items = hasMore ? [.. rows.Take(pageSize)] : rows;
         return new Page<T>(items, hasMore, total);
     }
 
@@ -453,19 +457,19 @@ public sealed class SelectBuilder
         => new(
             _executor,
             overlay ?? Overlay,
-            select ?? _select,
-            from ?? _from,
+            select ?? _selectItems,
+            from ?? _fromSource,
             joins ?? _joins,
-            where ?? _where,
+            where ?? _wherePredicate,
             orderBy ?? _orderBy,
             limit ?? _limit,
             offset ?? _offset,
-            distinct ?? _distinct,
-            with ?? _with,
-            recursiveWith ?? _recursiveWith,
-            unionAll ?? _unionAll,
+            distinct ?? _isDistinct,
+            with ?? _commonTableExpressions,
+            recursiveWith ?? _hasRecursiveCte,
+            unionAll ?? _unionAllQueries,
             groupBy ?? _groupBy,
-            having ?? _having,
-            conditionalCount ?? _conditionalCount,
+            having ?? _havingPredicate,
+            conditionalCount ?? _conditionalPredicateCount,
             conditionalMask ?? ConditionalMask);
 }

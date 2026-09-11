@@ -27,7 +27,9 @@ public enum BinaryOp
     And,
     Or,
     Like,
-    ILike
+    ILike,
+    Add,
+    Subtract
 }
 
 // A LIKE/ILIKE with an explicit ESCAPE character, kept separate from BinaryExpr's
@@ -95,13 +97,19 @@ public sealed record RowNumberExpr(
     EquatableList<Expr> PartitionColumns,
     EquatableList<OrderByItem> OrderColumns) : Expr
 {
-    public RowNumberExpr PartitionBy(params Expr[] columns) => this with { PartitionColumns = [..columns] };
+    public RowNumberExpr PartitionBy(params Expr[] columns) => this with { PartitionColumns = [.. columns] };
 
     public RowNumberExpr OrderBy(Expr expr)
-        => this with { OrderColumns = [..OrderColumns, new OrderByItem(expr, false)] };
+        => this with
+        {
+            OrderColumns = [.. OrderColumns, new OrderByItem(expr, false)]
+        };
 
     public RowNumberExpr OrderByDesc(Expr expr)
-        => this with { OrderColumns = [..OrderColumns, new OrderByItem(expr, true)] };
+        => this with
+        {
+            OrderColumns = [.. OrderColumns, new OrderByItem(expr, true)]
+        };
 }
 
 public static class QueryShape

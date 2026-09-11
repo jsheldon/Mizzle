@@ -8,7 +8,7 @@ public sealed class EquatableList<T> : IReadOnlyList<T>, IEquatable<EquatableLis
 {
     private readonly T[] _items;
 
-    public EquatableList(IEnumerable<T> items) => _items = [..items];
+    public EquatableList(IEnumerable<T> items) => _items = [.. items];
 
     public T this[int index] => _items[index];
 

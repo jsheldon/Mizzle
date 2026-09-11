@@ -35,11 +35,11 @@ internal static class SqlTranslator
 
         var tableName = CleanName(match.Groups["from"].Value.Split('.').Last());
         var variable = char.ToLowerInvariant(tableName[0]) + tableName[1..];
-        var sb = new StringBuilder();
-        sb.AppendLine($"var {variable} = new {TextNames.ToTableClass(tableName)}();");
-        sb.AppendLine();
-        sb.AppendLine($"var rows = await db.Select({string.Join(", ", columns.Select(c => variable + "." + TextNames.ToPascal(CleanName(c.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0].Split('.').Last()))))})");
-        sb.AppendLine($"    .From({variable})");
+        var stringBuilder = new StringBuilder();
+        stringBuilder.AppendLine($"var {variable} = new {TextNames.ToTableClass(tableName)}();");
+        stringBuilder.AppendLine();
+        stringBuilder.AppendLine($"var rows = await db.Select({string.Join(", ", columns.Select(c => variable + "." + TextNames.ToPascal(CleanName(c.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0].Split('.').Last()))))})");
+        stringBuilder.AppendLine($"    .From({variable})");
 
         var rest = match.Groups["rest"].Value;
         var where = Regex.Match(rest, @"\bwhere\s+(?<where>.+?)(\border\s+by\b|\blimit\b|\boffset\b|$)", RegexOptions.IgnoreCase | RegexOptions.Singleline);
@@ -53,7 +53,7 @@ internal static class SqlTranslator
                     throw new CliFailure("MZCLI063", $"Unsupported WHERE predicate '{part.Trim()}'.", "Only column = parameter joined by AND is supported right now.");
                 }
 
-                sb.AppendLine($"    .Where({variable}.{TextNames.ToPascal(eq.Groups["col"].Value.Split('.').Last())}.Eq({CleanParameter(eq.Groups["value"].Value)}))");
+                stringBuilder.AppendLine($"    .Where({variable}.{TextNames.ToPascal(eq.Groups["col"].Value.Split('.').Last())}.Eq({CleanParameter(eq.Groups["value"].Value)}))");
             }
         }
 
@@ -61,17 +61,17 @@ internal static class SqlTranslator
         if (order.Success)
         {
             var method = string.Equals(order.Groups["dir"].Value, "desc", StringComparison.OrdinalIgnoreCase) ? "OrderByDesc" : "OrderBy";
-            sb.AppendLine($"    .{method}({variable}.{TextNames.ToPascal(order.Groups["order"].Value.Split('.').Last())})");
+            stringBuilder.AppendLine($"    .{method}({variable}.{TextNames.ToPascal(order.Groups["order"].Value.Split('.').Last())})");
         }
 
         var limit = Regex.Match(rest, @"\blimit\s+(?<limit>\d+)", RegexOptions.IgnoreCase);
         if (limit.Success)
         {
-            sb.AppendLine($"    .Limit({limit.Groups["limit"].Value})");
+            stringBuilder.AppendLine($"    .Limit({limit.Groups["limit"].Value})");
         }
 
-        sb.AppendLine("    .ToListAsync<Row>();");
-        return sb.ToString();
+        stringBuilder.AppendLine("    .ToListAsync<Row>();");
+        return stringBuilder.ToString();
     }
 
     private static string CleanName(string value)

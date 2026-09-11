@@ -8,12 +8,12 @@ public sealed class DeleteBuilder
 {
     private readonly ITable _table;
     private readonly IQueryExecutor? _executor;
-    private readonly Expr? _where;
-    private readonly EquatableList<SelectItem> _returning;
+    private readonly Expr? _wherePredicate;
+    private readonly EquatableList<SelectItem> _returningItems;
     private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
-    private readonly EquatableList<CteClause> _with;
-    private readonly bool _recursiveWith;
-    private readonly int? _expect;
+    private readonly EquatableList<CteClause> _commonTableExpressions;
+    private readonly bool _hasRecursiveCte;
+    private readonly int? _expectedRowCount;
 
     public DeleteBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
         : this(table, executor, overlay, null, [], [], [], false, null)
@@ -34,18 +34,18 @@ public sealed class DeleteBuilder
         _table = table;
         _executor = executor;
         Overlay = overlay;
-        _where = where;
-        _returning = returning;
+        _wherePredicate = where;
+        _returningItems = returning;
         _returningColumns = returningColumns;
-        _with = with;
-        _recursiveWith = recursiveWith;
-        _expect = expect;
+        _commonTableExpressions = with;
+        _hasRecursiveCte = recursiveWith;
+        _expectedRowCount = expect;
     }
 
     public QueryOptions? Overlay { get; }
 
     public DeleteBuilder Where(Expr expr)
-        => Copy(where: _where is null ? expr : Sql.And(_where, expr));
+        => Copy(where: _wherePredicate is null ? expr : Sql.And(_wherePredicate, expr));
 
     // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
     // value no longer compiles instead of failing only at the database.
@@ -58,15 +58,15 @@ public sealed class DeleteBuilder
     /// </summary>
     public DeleteBuilder Returning(params IColumn[] columns)
         => Copy(
-            returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
-            returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
+            returning: [.. columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
+            returningColumns: [.. columns.Select(RuntimeProjectionColumn.From)]);
 
     /// <summary>Prefixes the statement with a common table expression.</summary>
-    public DeleteBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+    public DeleteBuilder With(CteClause cte) => Copy(with: [.. _commonTableExpressions, cte]);
 
     /// <summary>Prefixes the statement with a <c>WITH RECURSIVE</c> common table expression.</summary>
     public DeleteBuilder WithRecursive(CteClause cte)
-        => Copy(with: [.._with, cte], recursiveWith: true);
+        => Copy(with: [.. _commonTableExpressions, cte], recursiveWith: true);
 
     /// <summary>
     ///     The row count this statement must affect. Anything else throws
@@ -76,12 +76,12 @@ public sealed class DeleteBuilder
 
     public DeleteBuilder Timeout(TimeSpan timeout) => Copy(overlay: new QueryOptions(timeout));
 
-    public DeleteQuery Build() => new(_table.ToFrom(), _where, _returning, _with, _recursiveWith);
+    public DeleteQuery Build() => new(_table.ToFrom(), _wherePredicate, _returningItems, _commonTableExpressions, _hasRecursiveCte);
 
     public async Task<int> ExecuteAsync(CancellationToken cancellationToken = default)
     {
         var affected = await Executor().ExecuteAsync(Build(), Overlay, cancellationToken);
-        if (_expect is int expected && affected != expected)
+        if (_expectedRowCount is int expected && affected != expected)
         {
             throw new ConcurrencyException(expected, affected);
         }
@@ -171,10 +171,10 @@ public sealed class DeleteBuilder
             _table,
             _executor,
             overlay ?? Overlay,
-            where ?? _where,
-            returning ?? _returning,
+            where ?? _wherePredicate,
+            returning ?? _returningItems,
             returningColumns ?? _returningColumns,
-            with ?? _with,
-            recursiveWith ?? _recursiveWith,
-            expect ?? _expect);
+            with ?? _commonTableExpressions,
+            recursiveWith ?? _hasRecursiveCte,
+            expect ?? _expectedRowCount);
 }

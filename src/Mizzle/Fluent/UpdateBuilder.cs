@@ -7,16 +7,17 @@ public sealed class UpdateBuilder
 {
     private readonly ITable _table;
     private readonly IQueryExecutor? _executor;
-    private readonly EquatableList<(string Column, Expr Value)> _set;
-    private readonly Expr? _where;
-    private readonly EquatableList<SelectItem> _returning;
+    private readonly EquatableList<JoinClause> _joins;
+    private readonly EquatableList<(string Column, Expr Value)> _assignments;
+    private readonly Expr? _wherePredicate;
+    private readonly EquatableList<SelectItem> _returningItems;
     private readonly EquatableList<RuntimeProjectionColumn> _returningColumns;
-    private readonly EquatableList<CteClause> _with;
-    private readonly bool _recursiveWith;
-    private readonly int? _expect;
+    private readonly EquatableList<CteClause> _commonTableExpressions;
+    private readonly bool _hasRecursiveCte;
+    private readonly int? _expectedRowCount;
 
     public UpdateBuilder(ITable table, IQueryExecutor? executor = null, QueryOptions? overlay = null)
-        : this(table, executor, overlay, [], null, [], [], [], false, null)
+        : this(table, executor, overlay, [], [], null, [], [], [], false, null)
     {
     }
 
@@ -24,6 +25,7 @@ public sealed class UpdateBuilder
         ITable table,
         IQueryExecutor? executor,
         QueryOptions? overlay,
+        EquatableList<JoinClause> joins,
         EquatableList<(string Column, Expr Value)> set,
         Expr? where,
         EquatableList<SelectItem> returning,
@@ -35,13 +37,14 @@ public sealed class UpdateBuilder
         _table = table;
         _executor = executor;
         Overlay = overlay;
-        _set = set;
-        _where = where;
-        _returning = returning;
+        _joins = joins;
+        _assignments = set;
+        _wherePredicate = where;
+        _returningItems = returning;
         _returningColumns = returningColumns;
-        _with = with;
-        _recursiveWith = recursiveWith;
-        _expect = expect;
+        _commonTableExpressions = with;
+        _hasRecursiveCte = recursiveWith;
+        _expectedRowCount = expect;
     }
 
     public QueryOptions? Overlay { get; }
@@ -49,7 +52,7 @@ public sealed class UpdateBuilder
     // Generic over the column's own type, matching Column<T>.Eq(T): a mismatched
     // value no longer compiles instead of failing only at the database.
     public UpdateBuilder Set<T>(Column<T> column, T value)
-        => Copy(set: [.._set, (column.Name, (Expr)column.Bind(value))]);
+        => Copy(set: [.. _assignments, (column.Name, (Expr)column.Bind(value))]);
 
     /// <summary>
     ///     Sets this column to a computed/server-side expression (e.g. <c>TSql.GetDate()</c>)
@@ -59,13 +62,29 @@ public sealed class UpdateBuilder
     ///     for ordinary literal values.
     /// </summary>
     public UpdateBuilder Set<T>(Column<T> column, Expr expression)
-        => Copy(set: [.._set, (column.Name, expression)]);
+        => Copy(set: [.. _assignments, (column.Name, expression)]);
 
     public UpdateBuilder Where(Expr expr)
-        => Copy(where: _where is null ? expr : Sql.And(_where, expr));
+        => Copy(where: _wherePredicate is null ? expr : Sql.And(_wherePredicate, expr));
 
     public UpdateBuilder Where<T>(Column<T> column, T value)
         => Where(new BinaryExpr(BinaryOp.Eq, column.ToRef(), column.Bind(value)));
+
+    /// <summary>
+    ///     Joins another table into the update (SQL Server only today: <c>UPDATE ... FROM ...
+    ///     INNER JOIN ... ON ...</c>). Postgres's <c>UPDATE ... FROM</c> would need a self-join
+    ///     rewrite to express the updated table as one side of the join, which isn't implemented.
+    /// </summary>
+    public UpdateBuilder InnerJoin(FromSource target, Expr on)
+        => Copy(joins: [.. _joins, new JoinClause(JoinKind.Inner, target, on)]);
+
+    public UpdateBuilder InnerJoin(ITable target, Expr on) => InnerJoin(target.ToFrom(), on);
+
+    /// <summary>Joins another table into the update, keeping rows with no match (SQL Server only today).</summary>
+    public UpdateBuilder LeftJoin(FromSource target, Expr on)
+        => Copy(joins: [.. _joins, new JoinClause(JoinKind.Left, target, on)]);
+
+    public UpdateBuilder LeftJoin(ITable target, Expr on) => LeftJoin(target.ToFrom(), on);
 
     /// <summary>
     ///     The columns to return from the affected rows, read back through the typed
@@ -73,15 +92,15 @@ public sealed class UpdateBuilder
     /// </summary>
     public UpdateBuilder Returning(params IColumn[] columns)
         => Copy(
-            returning: [..columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
-            returningColumns: [..columns.Select(RuntimeProjectionColumn.From)]);
+            returning: [.. columns.Select(c => new SelectItem(c.ToRef(), c.ProjectionName))],
+            returningColumns: [.. columns.Select(RuntimeProjectionColumn.From)]);
 
     /// <summary>Prefixes the statement with a common table expression.</summary>
-    public UpdateBuilder With(CteClause cte) => Copy(with: [.._with, cte]);
+    public UpdateBuilder With(CteClause cte) => Copy(with: [.. _commonTableExpressions, cte]);
 
     /// <summary>Prefixes the statement with a <c>WITH RECURSIVE</c> common table expression.</summary>
     public UpdateBuilder WithRecursive(CteClause cte)
-        => Copy(with: [.._with, cte], recursiveWith: true);
+        => Copy(with: [.. _commonTableExpressions, cte], recursiveWith: true);
 
     /// <summary>
     ///     The row count this statement must affect. Anything else throws
@@ -94,12 +113,14 @@ public sealed class UpdateBuilder
     public UpdateQuery Build()
     {
         EnsureVersionInWhere();
-        if (_set.Count == 0)
+        if (_assignments.Count == 0)
         {
             throw new InvalidOperationException("SET is required.");
         }
 
-        return new UpdateQuery(_table.ToFrom(), _set, _where, _returning, _with, _recursiveWith);
+        return new UpdateQuery(
+            _table.ToFrom(), _joins, _assignments, _wherePredicate, _returningItems, _commonTableExpressions,
+            _hasRecursiveCte);
     }
 
     public Task<IReadOnlyList<T>> ToListAsync<T>(
@@ -111,7 +132,7 @@ public sealed class UpdateBuilder
     {
         var query = Build();
         var affected = await Executor().ExecuteAsync(query, Overlay, cancellationToken);
-        if (_expect is int expected && affected != expected)
+        if (_expectedRowCount is int expected && affected != expected)
         {
             throw new ConcurrencyException(expected, affected);
         }
@@ -188,7 +209,7 @@ public sealed class UpdateBuilder
     {
         foreach (var column in _table.Columns)
         {
-            if (column.IsVersion && !ContainsColumn(_where, column))
+            if (column.IsVersion && !ContainsColumn(_wherePredicate, column))
             {
                 throw new InvalidOperationException("Version column must appear in WHERE");
             }
@@ -209,13 +230,13 @@ public sealed class UpdateBuilder
                 actual.TableAlias == expected.TableAlias && actual.ColumnName == expected.ColumnName,
             BinaryExpr binary => ContainsColumn(binary.Left, column) || ContainsColumn(binary.Right, column),
             UnaryExpr unary => ContainsColumn(unary.Operand, column),
-            InExpr inn => ContainsColumn(inn.Needle, column) || inn.Haystack.Any(item => ContainsColumn(item, column)),
+            InExpr inExpression => ContainsColumn(inExpression.Needle, column) || inExpression.Haystack.Any(item => ContainsColumn(item, column)),
             BetweenExpr between =>
                 ContainsColumn(between.Value, column)
                 || ContainsColumn(between.Lo, column)
                 || ContainsColumn(between.Hi, column),
             CoalesceExpr coalesce => coalesce.Args.Any(arg => ContainsColumn(arg, column)),
-            AggregateExpr { Arg: not null } agg => ContainsColumn(agg.Arg, column),
+            AggregateExpr { Arg: not null } aggregate => ContainsColumn(aggregate.Arg, column),
             CallExpr call => call.Args.Any(arg => ContainsColumn(arg, column)),
             ConvertExpr convert => ContainsColumn(convert.Value, column),
             CaseExpr @case => @case.Whens.Any(w => ContainsColumn(w.Condition, column) || ContainsColumn(w.Result, column))
@@ -225,6 +246,7 @@ public sealed class UpdateBuilder
     }
 
     private UpdateBuilder Copy(
+        EquatableList<JoinClause>? joins = null,
         EquatableList<(string Column, Expr Value)>? set = null,
         Expr? where = null,
         EquatableList<SelectItem>? returning = null,
@@ -237,11 +259,12 @@ public sealed class UpdateBuilder
             _table,
             _executor,
             overlay ?? Overlay,
-            set ?? _set,
-            where ?? _where,
-            returning ?? _returning,
+            joins ?? _joins,
+            set ?? _assignments,
+            where ?? _wherePredicate,
+            returning ?? _returningItems,
             returningColumns ?? _returningColumns,
-            with ?? _with,
-            recursiveWith ?? _recursiveWith,
-            expect ?? _expect);
+            with ?? _commonTableExpressions,
+            recursiveWith ?? _hasRecursiveCte,
+            expect ?? _expectedRowCount);
 }
