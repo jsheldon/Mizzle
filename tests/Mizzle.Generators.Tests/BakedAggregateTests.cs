@@ -16,6 +16,7 @@ public sealed class BakedAggregateTests
             public PgColumn<Guid> OrderId { get; } = Uuid("order_id").NotNull();
             public PgColumn<Guid> CustomerId { get; } = Uuid("customer_id").NotNull();
             public PgColumn<decimal> Total { get; } = Numeric("total").NotNull();
+            public PgColumn<string> Status { get; } = Text("status").NotNull();
         }
         """;
 
@@ -164,5 +165,90 @@ public sealed class BakedAggregateTests
         Assert.Contains(result.Diagnostics, d => d.Id == "MIZ014" && d.Severity == DiagnosticSeverity.Warning);
         Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.DoesNotContain("BareCountIntoMapper", GeneratorTestHost.Generated(result), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_aggregate_over_a_computed_operand_bakes_in_strict_mode()
+    {
+        // Sql.Sum<decimal>(Sql.Case(...)) compiles (the Expr-typed escape hatch),
+        // but until now the walker's operand resolution only accepted a plain
+        // column, so this shape could never actually bake -- it fell back to the
+        // runtime path even under MizzleQueryMode=Strict, which should fail
+        // closed (MIZ002) rather than silently degrade.
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record OpenTotal(Guid CustomerId, decimal? Revenue);
+
+            public static class ComputedAggQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(
+                            o.CustomerId,
+                            Sql.As(
+                                Sql.Sum<decimal>(Sql.Case(Sql.When(o.Status.Eq("open"), o.Total)).Else(0m)),
+                                "Revenue"))
+                        .From(o)
+                        .GroupBy(o.CustomerId)
+                        .ToListAsync<OpenTotal>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("sum(CASE WHEN", generated, StringComparison.Ordinal);
+        Assert.Contains("AS \\\"Revenue\\\"", generated, StringComparison.Ordinal);
+        // The caller's explicit <decimal> drives the reader, not a guessed "object".
+        Assert.Contains("GetFieldValue<decimal>", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_aggregate_over_a_computed_operand_bakes_in_having()
+    {
+        const string callSite = """
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record OpenTotal(Guid CustomerId, decimal? Revenue);
+
+            public static class ComputedHavingQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(
+                            o.CustomerId,
+                            Sql.As(
+                                Sql.Sum<decimal>(Sql.Case(Sql.When(o.Status.Eq("open"), o.Total)).Else(0m)),
+                                "Revenue"))
+                        .From(o)
+                        .GroupBy(o.CustomerId)
+                        .Having(Sql.Sum<decimal>(Sql.Case(Sql.When(o.Status.Eq("open"), o.Total)).Else(0m)).Gt(100m))
+                        .ToListAsync<OpenTotal>();
+                }
+            }
+            """;
+
+        var (result, diagnostics) = GeneratorTestHost.RunAndCompile(Tables, callSite);
+        Assert.Empty(result.Diagnostics);
+        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+
+        var generated = GeneratorTestHost.Generated(result);
+        Assert.Contains("HAVING sum(CASE WHEN", generated, StringComparison.Ordinal);
     }
 }

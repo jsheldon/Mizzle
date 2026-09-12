@@ -286,6 +286,25 @@ public sealed class SelectBuilder
             _havingPredicate);
     }
 
+    /// <summary>
+    ///     Names this query as a common table expression and declares <typeparamref name="T"/>
+    ///     as a table type with one typed column per column this query's select list projects
+    ///     -- <typeparamref name="T"/> must not already exist; the generator declares it. Use
+    ///     it with <see cref="With"/> like any <see cref="CteBuilder.Named{T}"/> CTE.
+    ///     Requires <paramref name="name"/> to be a string literal and this chain to be
+    ///     statically visible, the same requirements the baked path already has.
+    /// </summary>
+    /// <example>
+    ///     <code>
+    ///     var cte = db.Select(o.Ndc, Sql.RowNumber().PartitionBy(o.Ndc).OrderByDesc(o.EffectiveDate).As("RowNumber"))
+    ///         .From(o)
+    ///         .AsCte&lt;Ranked&gt;("ranked");
+    ///     var ranked = new Ranked();
+    ///     var rows = await db.Select(ranked.Ndc).With(cte).From(ranked).Where(ranked.RowNumber.Eq(1L)).ToListAsync&lt;BestNdc&gt;();
+    ///     </code>
+    /// </example>
+    public CteClause AsCte<T>(string name) => CteBuilder.Named<T>(name, Build());
+
     public Task<IReadOnlyList<T>> ToListAsync<T>(
         Func<DbDataReader, T> map,
         CancellationToken cancellationToken = default)

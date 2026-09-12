@@ -61,7 +61,14 @@ public enum AggregateKind
     Max
 }
 
-public sealed record AggregateExpr(AggregateKind Kind, Expr? Arg) : Expr;
+// ArgClrType is the argument's own CLR type (set for Sum/Avg only, by the
+// Column<T>-typed Sql.Sum/Sql.Avg overloads) -- SUM and AVG don't return that
+// same type on both dialects (e.g. Postgres's SUM(int) is bigint; SQL Server's
+// stays int), so the emitters use it to cast toward a result type that is
+// correct, and identical, on both. Null for Count/Min/Max (no promotion ever
+// applies) and for the Expr-typed escape-hatch overloads (no known argument
+// type to promote from -- the caller's stated result type is trusted as-is).
+public sealed record AggregateExpr(AggregateKind Kind, Expr? Arg, Type? ArgClrType = null) : Expr;
 
 public sealed record CallExpr(string Name, EquatableList<Expr> Args, DialectKind Dialect) : Expr;
 

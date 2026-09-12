@@ -51,9 +51,16 @@ internal static class GeneratorTestHost
     }
 
     public static ImmutableArray<Diagnostic> Analyze(string source, string? queryMode)
+        => Analyze([source], queryMode);
+
+    // Each source becomes its own syntax tree, so e.g. table declarations and a
+    // call site can each carry their own file-scoped `namespace Demo;` without
+    // concatenating into one file that no longer parses as valid C# (two
+    // file-scoped namespace declarations, or a `using` after the first one).
+    public static ImmutableArray<Diagnostic> Analyze(string[] sources, string? queryMode)
     {
         var parseOptions = ParseOptions();
-        var compilation = CreateCompilation([source], parseOptions);
+        var compilation = CreateCompilation(sources, parseOptions);
         var analyzers = ImmutableArray.Create<DiagnosticAnalyzer>(
             new StrictAnalyzer(), new TableUsageAnalyzer(), new AlwaysFilterAnalyzer());
         var options = new AnalyzerOptions(ImmutableArray<AdditionalText>.Empty, new TestAnalyzerConfigOptionsProvider(queryMode));

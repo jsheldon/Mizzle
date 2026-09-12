@@ -346,8 +346,50 @@ public sealed class SqlServerEmitter : ISqlEmitter
 
     private static string Aggregate(AggregateExpr aggregate)
     {
+        // COUNT is int on SQL Server but bigint on Postgres; COUNT_BIG matches
+        // Postgres's width so Sql.Count()'s long-typed result is honest on both.
+        if (aggregate.Kind == AggregateKind.Count)
+        {
+            return aggregate.Arg is null ? "count_big(*)" : $"count_big({Expr(aggregate.Arg)})";
+        }
+
+        var argSql = aggregate.Arg is null ? null : Expr(aggregate.Arg);
+
+        // AVG(smallint/int/bigint) truncates via integer division on SQL Server;
+        // Postgres's AVG always returns numeric, never truncating. Casting the
+        // argument to decimal first forces decimal division, so both dialects
+        // compute the same value, not just declare the same result type.
+        if (aggregate.Kind == AggregateKind.Avg
+            && aggregate.ArgClrType is { } avgType
+            && (avgType == typeof(short) || avgType == typeof(int) || avgType == typeof(long)))
+        {
+            return $"avg(CAST({argSql} AS DECIMAL(38, 6)))";
+        }
+
+        // SUM(smallint/int) stays int on SQL Server (Postgres widens to bigint);
+        // SUM(bigint) stays bigint and can silently overflow (Postgres widens to
+        // numeric). SQL Server accumulates SUM using the argument's own declared
+        // type, so casting only the final result (CAST(SUM(col) AS BIGINT)) is too
+        // late -- the running total can already have overflowed int/bigint before
+        // that cast ever applies. Casting the ARGUMENT instead (SUM(CAST(col AS
+        // BIGINT))) makes the accumulator itself the wider type. SUM(real/float)
+        // already returns SQL Server's float (double precision) natively, so no
+        // cast is needed for those.
+        if (aggregate.Kind == AggregateKind.Sum && aggregate.ArgClrType is { } sumType)
+        {
+            if (sumType == typeof(short) || sumType == typeof(int))
+            {
+                return $"sum(CAST({argSql} AS BIGINT))";
+            }
+
+            if (sumType == typeof(long))
+            {
+                return $"sum(CAST({argSql} AS DECIMAL(38, 0)))";
+            }
+        }
+
         var name = aggregate.Kind.ToString().ToLowerInvariant();
-        return aggregate.Arg is null ? $"{name}(*)" : $"{name}({Expr(aggregate.Arg)})";
+        return $"{name}({argSql ?? "*"})";
     }
 
     // CaseInsensitive can never reach here: the capability check (FeatureCollector/

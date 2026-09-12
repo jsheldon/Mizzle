@@ -298,7 +298,17 @@ public sealed class PgEmitter : ISqlEmitter
     private static string Aggregate(AggregateExpr aggregate)
     {
         var name = aggregate.Kind.ToString().ToLowerInvariant();
-        return aggregate.Arg is null ? $"{name}(*)" : $"{name}({Expr(aggregate.Arg)})";
+        var sql = aggregate.Arg is null ? $"{name}(*)" : $"{name}({Expr(aggregate.Arg)})";
+
+        // SUM(real) stays real (single precision) on Postgres, but SQL Server's
+        // SUM(real) widens to float (double precision) natively. Casting here
+        // matches Sql.Sum's double-typed result on both dialects.
+        if (aggregate.Kind == AggregateKind.Sum && aggregate.ArgClrType == typeof(float))
+        {
+            return $"CAST({sql} AS DOUBLE PRECISION)";
+        }
+
+        return sql;
     }
 
     private static string Like(LikeExpr like)

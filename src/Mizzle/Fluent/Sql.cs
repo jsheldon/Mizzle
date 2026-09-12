@@ -112,27 +112,91 @@ public static class Sql
     /// <summary>Returns the first non-null argument, as SQL <c>COALESCE</c>.</summary>
     public static CoalesceExpr Coalesce(params Expr[] args) => new([.. args]);
 
-    /// <summary>A <c>COUNT</c> aggregate.</summary>
-    public static AggregateExpr Count() => new(AggregateKind.Count, null);
+    /// <summary>A <c>COUNT(*)</c> aggregate. Always a 64-bit row count.</summary>
+    public static Aggregate<long> Count() => new(new AggregateExpr(AggregateKind.Count, null));
 
-    /// <summary>A <c>SUM</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
-    public static AggregateExpr Sum(Expr arg) => new(AggregateKind.Sum, arg);
+    /// <summary>A <c>COUNT(column)</c> aggregate. Always a 64-bit row count.</summary>
+    public static Aggregate<long> Count(Expr arg) => new(new AggregateExpr(AggregateKind.Count, arg));
 
-    /// <summary>An <c>AVG</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
-    public static AggregateExpr Avg(Expr arg) => new(AggregateKind.Avg, arg);
+    // SUM and AVG do not return the argument's own type on both dialects (e.g.
+    // Postgres's SUM(int) is bigint and its AVG(int) is numeric; SQL Server's
+    // SUM(int) stays int and its AVG(int) truncates via integer division). The
+    // emitters cast toward these result types -- computed from the argument's
+    // known type -- so they are correct, and identical, on both dialects. See
+    // postgresql.org/docs/current/functions-aggregate.html and the SUM/AVG
+    // (Transact-SQL) "Return types" tables on learn.microsoft.com.
 
-    /// <summary>A <c>MIN</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
-    public static AggregateExpr Min(Expr arg) => new(AggregateKind.Min, arg);
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<long> Sum(Column<short> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(short)));
 
-    /// <summary>A <c>MAX</c> aggregate. A column converts to <c>Expr</c> implicitly.</summary>
-    public static AggregateExpr Max(Expr arg) => new(AggregateKind.Max, arg);
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<long> Sum(Column<int> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(int)));
+
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<decimal> Sum(Column<long> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(long)));
+
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<decimal> Sum(Column<decimal> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(decimal)));
+
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<double> Sum(Column<double> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(double)));
+
+    /// <summary>A <c>SUM</c> aggregate.</summary>
+    public static Aggregate<double> Sum(Column<float> arg) => new(new AggregateExpr(AggregateKind.Sum, arg, typeof(float)));
 
     /// <summary>
-    ///     Names an expression -- or a column, which converts to <c>Expr</c>
-    ///     implicitly -- in a select list.
+    ///     A <c>SUM</c> aggregate over a computed operand (e.g. a CASE), naming the result
+    ///     type directly -- Mizzle has no static type for a computed expression to promote
+    ///     from, so no dialect cast is applied here. If the expression needs one, apply it
+    ///     explicitly (e.g. with <c>TSql.Convert</c>).
     /// </summary>
-    /// <example><code>Sql.As(Sql.Count(), "Orders")</code></example>
-    public static SelectItem As(Expr expr, string alias) => new(expr, alias);
+    public static Aggregate<T> Sum<T>(Expr arg) => new(new AggregateExpr(AggregateKind.Sum, arg));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<decimal> Avg(Column<short> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(short)));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<decimal> Avg(Column<int> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(int)));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<decimal> Avg(Column<long> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(long)));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<decimal> Avg(Column<decimal> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(decimal)));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<double> Avg(Column<double> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(double)));
+
+    /// <summary>An <c>AVG</c> aggregate.</summary>
+    public static Aggregate<double> Avg(Column<float> arg) => new(new AggregateExpr(AggregateKind.Avg, arg, typeof(float)));
+
+    /// <summary>
+    ///     An <c>AVG</c> aggregate over a computed operand, naming the result type
+    ///     directly. See <see cref="Sum{T}(Expr)"/>.
+    /// </summary>
+    public static Aggregate<T> Avg<T>(Expr arg) => new(new AggregateExpr(AggregateKind.Avg, arg));
+
+    /// <summary>A <c>MIN</c> aggregate, typed the same as <paramref name="arg"/> on both dialects.</summary>
+    public static Aggregate<T> Min<T>(Column<T> arg) => new(new AggregateExpr(AggregateKind.Min, arg));
+
+    /// <summary>A <c>MIN</c> aggregate over a computed operand, naming the result type directly.</summary>
+    public static Aggregate<T> Min<T>(Expr arg) => new(new AggregateExpr(AggregateKind.Min, arg));
+
+    /// <summary>A <c>MAX</c> aggregate, typed the same as <paramref name="arg"/> on both dialects.</summary>
+    public static Aggregate<T> Max<T>(Column<T> arg) => new(new AggregateExpr(AggregateKind.Max, arg));
+
+    /// <summary>A <c>MAX</c> aggregate over a computed operand, naming the result type directly.</summary>
+    public static Aggregate<T> Max<T>(Expr arg) => new(new AggregateExpr(AggregateKind.Max, arg));
+
+    /// <summary>
+    ///     Names an expression -- a ranking function, CASE, CONVERT, or similar -- in a
+    ///     select list. Callable fluently (<c>expr.As("alias")</c>, an extension method) or
+    ///     as a free function (<c>Sql.As(expr, "alias")</c>); a plain column has its own
+    ///     <c>As(...)</c> (<see cref="Column{T}"/>), and an aggregate has its own typed
+    ///     <c>As(...)</c> too (<see cref="Aggregate{T}"/>).
+    /// </summary>
+    /// <example><code>Sql.RowNumber().PartitionBy(o.Ndc).OrderByDesc(o.EffectiveDate).As("RowNumber")</code></example>
+    public static SelectItem As(this Expr expr, string alias) => new(expr, alias);
 
     /// <summary>Projects a column held as an <see cref="IColumn"/> rather than a concrete type.</summary>
     public static SelectItem Item(IColumn column) => new(column.ToRef(), column.ProjectionName);
@@ -145,7 +209,4 @@ public static class Sql
             ? throw new ArgumentException(
                 "Value expects a literal; pass the expression itself.", nameof(value))
             : new ValueExpr(value, typeof(T));
-
-
-    public static AggregateExpr Count(Expr arg) => new(AggregateKind.Count, arg);
 }

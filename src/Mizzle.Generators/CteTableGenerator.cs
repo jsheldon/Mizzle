@@ -45,7 +45,10 @@ public sealed class CteTableGenerator : IIncrementalGenerator
             .CreateSyntaxProvider(
                 static (node, _) => node is InvocationExpressionSyntax
                 {
-                    Expression: MemberAccessExpressionSyntax { Name: GenericNameSyntax { Identifier.Text: "Named" } }
+                    Expression: MemberAccessExpressionSyntax
+                    {
+                        Name: GenericNameSyntax { Identifier.Text: "Named" or "AsCte" }
+                    }
                 },
                 static (ctx, _) => Transform(ctx))
             .Where(static site => site is not null)
@@ -61,15 +64,17 @@ public sealed class CteTableGenerator : IIncrementalGenerator
         var member = (MemberAccessExpressionSyntax)invocation.Expression;
         var generic = (GenericNameSyntax)member.Name;
         var model = context.SemanticModel;
+        var isAsCte = generic.Identifier.Text == "AsCte";
 
         if (generic.TypeArgumentList.Arguments.Count != 1
             || model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
             {
-                ContainingType.Name: "CteBuilder",
                 ContainingType.ContainingNamespace: { } ns
             } symbol
             || ns.ToDisplayString() != "Mizzle.Fluent"
-            || symbol.Parameters.Length != 2)
+            || (isAsCte
+                ? symbol.ContainingType.Name != "SelectBuilder" || symbol.Parameters.Length != 1
+                : symbol.ContainingType.Name != "CteBuilder" || symbol.Parameters.Length != 2))
         {
             return null;
         }
@@ -93,7 +98,9 @@ public sealed class CteTableGenerator : IIncrementalGenerator
             .OfType<BaseNamespaceDeclarationSyntax>()
             .FirstOrDefault()?.Name.ToString() ?? "";
 
-        var cte = BakedChainWalker.TryGetCte(invocation, model);
+        var cte = isAsCte
+            ? BakedChainWalker.TryGetCteFromAsCte(invocation, model)
+            : BakedChainWalker.TryGetCte(invocation, model);
         if (cte is null)
         {
             return new CteTableSite(typeName, declarationNamespace, null, [("MIZ015", [typeName])], invocation.GetLocation());

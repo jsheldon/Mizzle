@@ -207,6 +207,43 @@ public sealed class BakedSqlParityTests
     }
 
     [Fact]
+    public void Having_with_a_typed_aggregate_comparison_bakes_and_matches_the_runtime_emitter()
+    {
+        var o = new Orders();
+        var runtime = RuntimeSql(new SelectBuilder()
+            .Select(o.Status, Sql.Count().As("N"))
+            .From(o.ToFrom())
+            .GroupBy(o.Status)
+            .Having(Sql.Count().Gt(2L)));
+
+        var baked = BakedSql("""
+            using System;
+            using System.Threading.Tasks;
+            using Mizzle.Fluent;
+            using Mizzle.Postgres;
+
+            namespace Demo;
+
+            public record HavingRow(string Status, long N);
+
+            public static class TypedHavingQ
+            {
+                public static async Task Run(PostgresDb db)
+                {
+                    var o = new Orders();
+                    var rows = await db.Select(o.Status, Sql.Count().As("N"))
+                        .From(o)
+                        .GroupBy(o.Status)
+                        .Having(Sql.Count().Gt(2L))
+                        .ToListAsync<HavingRow>();
+                }
+            }
+            """);
+
+        Assert.Equal(SymbolDisplay.FormatLiteral(runtime, quote: true), baked);
+    }
+
+    [Fact]
     public void Literal_select_item_takes_its_slot_before_the_where_clause()
     {
         var o = new Orders();

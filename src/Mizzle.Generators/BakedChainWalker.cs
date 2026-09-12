@@ -38,6 +38,24 @@ internal static class BakedChainWalker
         return WalkChain(terminatorMember.Expression, model, out hasReportedColumnError);
     }
 
+    // Resolves a <select chain>.AsCte<T>("name") call site's name and body shape.
+    // AsCte<T> just forwards to CteBuilder.Named<T> internally, so the receiver
+    // chain is the CTE body -- walked exactly like a .Build()/.ToListAsync()
+    // terminator, since TryGetSpec only strips the outer call and walks its
+    // receiver regardless of what that outer call is named.
+    public static BakedCte? TryGetCteFromAsCte(InvocationExpressionSyntax invocation, SemanticModel model)
+    {
+        if (invocation.ArgumentList.Arguments is not { Count: 1 } args
+            || args[0].Expression is not LiteralExpressionSyntax nameLiteral
+            || !nameLiteral.IsKind(SyntaxKind.StringLiteralExpression))
+        {
+            return null;
+        }
+
+        var body = TryGetSpec(invocation, model, out _);
+        return body is null ? null : new BakedCte(nameLiteral.Token.ValueText, body);
+    }
+
     // Resolves a CteBuilder.Named(name, body) call site's name and body shape --
     // reused by CteTableGenerator so a generated CTE table has exactly the
     // columns the same resolution already proves the body's SQL projects.
@@ -535,8 +553,64 @@ internal static class BakedChainWalker
         return chain;
     }
 
+    // A local can only be assigned within the method it's declared in, so that
+    // method is the whole scope to check. A field is different: FirstAncestorOrSelf
+    // <MemberDeclarationSyntax> on a field's declarator lands on the field
+    // declaration itself, not the class, so it would never see an assignment in a
+    // constructor or method -- silently treating every field as "never reassigned"
+    // regardless of what the rest of the type actually does to it. A mutable field
+    // can be reassigned from any method (or, if accessible, another type entirely),
+    // which no syntax walk here can exhaustively rule out, so it's always rejected.
+    // A readonly field can only be assigned in its own initializer or in a
+    // constructor of the declaring type (a C# language guarantee), so that bounded
+    // set of constructors is the only additional place left to check.
     private static bool IsReassigned(ISymbol symbol, SyntaxNode declaration, SemanticModel model)
     {
+        if (symbol is IFieldSymbol field)
+        {
+            if (!field.IsReadOnly)
+            {
+                return true;
+            }
+
+            // A partial class can spread its declaration -- and any of its
+            // constructors -- across multiple files/syntax trees, so every
+            // declaring reference of the TYPE (not just the one the field itself
+            // happens to be declared in) has to be checked. Each tree needs its
+            // own semantic model: a SemanticModel is bound to the single tree it
+            // was created from and throws if asked about a node from another.
+            var typeSyntaxRefs = field.ContainingType.DeclaringSyntaxReferences;
+            if (typeSyntaxRefs.IsEmpty)
+            {
+                return true;
+            }
+
+            foreach (var typeSyntaxRef in typeSyntaxRefs)
+            {
+                if (typeSyntaxRef.GetSyntax() is not TypeDeclarationSyntax containingType)
+                {
+                    continue;
+                }
+
+                var typeModel = typeSyntaxRef.SyntaxTree == declaration.SyntaxTree
+                    ? model
+                    : model.Compilation.GetSemanticModel(typeSyntaxRef.SyntaxTree);
+
+                foreach (var constructor in containingType.Members.OfType<ConstructorDeclarationSyntax>())
+                {
+                    foreach (var assignment in constructor.DescendantNodes().OfType<AssignmentExpressionSyntax>())
+                    {
+                        if (SymbolEqualityComparer.Default.Equals(typeModel.GetSymbolInfo(assignment.Left).Symbol, symbol))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
         var scope = declaration.FirstAncestorOrSelf<MemberDeclarationSyntax>();
         if (scope is null)
         {
@@ -844,21 +918,23 @@ internal static class BakedChainWalker
             return true;
         }
 
-        // Sql.Eq(<aggregate>, <value>) -- the only HAVING shape that bakes today.
+        // Sql.Eq(<aggregate>, <value>) -- the original free-standing HAVING shape --
+        // or aggregate.Eq/Ne/Gt/Gte/Lt/Lte(value), the typed Aggregate<T> comparison
+        // form (e.g. Sql.Count().Gt(2L)), which ResolveCondition also resolves.
         public BakedCondition? ResolveHavingCondition(ExpressionSyntax expression)
         {
-            if (expression is not InvocationExpressionSyntax
+            if (expression is InvocationExpressionSyntax
                 {
                     Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Eq" } member,
                     ArgumentList.Arguments: { Count: 2 } args
                 }
-                || _model.GetSymbolInfo(member).Symbol is not IMethodSymbol { ContainingType.Name: "Sql" })
+                && _model.GetSymbolInfo(member).Symbol is IMethodSymbol { ContainingType.Name: "Sql" }
+                && ResolveAggregateSql(args[0].Expression) is { } left)
             {
-                return null;
+                return new BakedCondition("", "", null, null, left);
             }
 
-            var left = ResolveAggregateSql(args[0].Expression);
-            return left is null ? null : new BakedCondition("", "", null, null, left);
+            return ResolveCondition(expression);
         }
 
         // .UnionAll(<select chain>) -- inline, or a local or field holding one.
@@ -920,6 +996,24 @@ internal static class BakedChainWalker
                 alias = sqlAlias;
                 expression = asArgs[0].Expression;
             }
+            // The fluent form -- Sql.RowNumber()...As("alias") (Sql's Expr extension) or
+            // Sql.Count().As("alias") (Aggregate<T>'s own instance method) -- has one
+            // argument at the call site; the receiver (not an argument) is the operand.
+            else if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "As" } fluentAsMember,
+                    ArgumentList.Arguments: { Count: 1 } fluentAsArgs
+                }
+                && _model.GetSymbolInfo(fluentAsMember).Symbol is IMethodSymbol { ContainingType.Name: "Sql" or "Aggregate" })
+            {
+                if (TryGetAliasName(fluentAsArgs[0].Expression) is not { } fluentAlias)
+                {
+                    return null;
+                }
+
+                alias = fluentAlias;
+                expression = fluentAsMember.Expression;
+            }
 
             // ROW_NUMBER() is a well-defined bigint-returning function on both
             // dialects and is guaranteed never NULL, unlike CASE/CONVERT/TSql
@@ -961,7 +1055,8 @@ internal static class BakedChainWalker
                     Expression: MemberAccessExpressionSyntax aggregateMember,
                     ArgumentList.Arguments: var aggregateArgs
                 }
-                || _model.GetSymbolInfo(aggregateMember).Symbol is not IMethodSymbol { ContainingType.Name: "Sql" })
+                || _model.GetSymbolInfo(aggregateMember).Symbol is not IMethodSymbol
+                    { ContainingType.Name: "Sql" } aggregateMethod)
             {
                 return null;
             }
@@ -976,7 +1071,8 @@ internal static class BakedChainWalker
                     isLiteral: true);
             }
 
-            var function = aggregateMember.Name.Identifier.Text switch
+            var kindName = aggregateMember.Name.Identifier.Text;
+            var function = kindName switch
             {
                 "Count" => "count",
                 "Sum" => "sum",
@@ -992,7 +1088,19 @@ internal static class BakedChainWalker
                 return null;
             }
 
+            // The Column<T>-typed Sum/Avg overloads that promote (e.g. Sum(Column<int>))
+            // are all non-generic; the Expr-typed escape hatch (Sum<T>(Expr)/Avg<T>(Expr))
+            // is generic and never promotes, even when its argument happens to be a
+            // plain column syntactically -- e.g. Sql.Avg<decimal>(orders.Quantity) is a
+            // call to the escape hatch (an explicit type argument forces it), so the
+            // runtime applies no cast and averages Quantity as int, truncating.
+            // Checking which overload actually resolved -- not just whether the
+            // argument looks like a column -- is what keeps the two in sync.
+            var isEscapeHatchCall = aggregateMethod.TypeArguments.Length == 1;
+
             string argument;
+            BakedColumn? argumentColumn = null;
+            ITypeSymbol? explicitResultType = null;
             if (aggregateArgs.Count == 0)
             {
                 argument = "*";
@@ -1000,16 +1108,128 @@ internal static class BakedChainWalker
             else if (aggregateArgs.Count == 1 && ResolveColumn(aggregateArgs[0].Expression) is { } inner)
             {
                 argument = Quote(inner.TableAlias) + "." + Quote(inner.DbName);
+                if (isEscapeHatchCall)
+                {
+                    explicitResultType = aggregateMethod.TypeArguments[0];
+                }
+                else
+                {
+                    argumentColumn = inner;
+                }
+            }
+            // A computed operand (CASE/CONVERT/a TSql call), e.g. Sql.Sum<decimal>(Sql.Case(...)).
+            // Only the escape-hatch overloads reach here (the Column<T> overloads
+            // always resolve via ResolveColumn above) -- the caller-stated result
+            // type, since Mizzle has no static type for a computed expression to
+            // promote from.
+            else if (aggregateArgs.Count == 1
+                && isEscapeHatchCall
+                && (ResolveConvertSql(aggregateArgs[0].Expression)
+                    ?? ResolveTSqlCallSql(aggregateArgs[0].Expression)
+                    ?? ResolveCaseSql(aggregateArgs[0].Expression)) is { } renderedArgument)
+            {
+                argument = renderedArgument;
+                explicitResultType = aggregateMethod.TypeArguments[0];
             }
             else
             {
                 return null;
             }
 
+            // Mirrors SqlServerEmitter/PgEmitter's dialect-normalization casts, so the
+            // compile-time-inferred type and SQL text match what the emitted SQL
+            // actually returns on both dialects -- see AggregateSql below. No cast
+            // ever applies to a computed operand (explicitResultType case): the
+            // caller's stated type is trusted as-is, matching the emitters' own
+            // Expr-typed-overload contract.
+            var isSqlServer = Tables.Values.FirstOrDefault()?.IsPostgres == false;
+            var (clrTypeName, isRequired, readerCall) = kindName switch
+            {
+                // Always a non-null 64-bit row count.
+                "Count" => ("long", true, "GetInt64"),
+                "Sum" or "Avg" when argumentColumn is { } sumAvgArg
+                    => PromoteSumAvgType(kindName, sumAvgArg.ClrTypeName) ?? ("object", false, "GetFieldValue<object>"),
+                _ when explicitResultType is { } declared
+                    => (TableFacts.ToCSharpType(declared), false, TableFacts.ReaderCall(declared)),
+                _ => argumentColumn is { } minMaxArg
+                    ? (minMaxArg.ClrTypeName, false, minMaxArg.ReaderCall)
+                    : ("object", false, "GetFieldValue<object>")
+            };
+
+            var sqlExpression = AggregateSql(kindName, function, argument, argumentColumn?.ClrTypeName, isSqlServer);
+
             return new BakedColumn(
-                "", "", alias ?? "", "object", isRequired: false, "GetFieldValue<object>",
+                "", "", alias ?? "", clrTypeName, isRequired, readerCall,
                 projectionName: alias,
-                sqlExpression: $"{function}({argument})");
+                sqlExpression: sqlExpression);
+        }
+
+        // Sum/Avg's promoted (ClrTypeName, IsRequired, ReaderCall) given the argument
+        // column's own type -- null when the argument's type has no known promotion
+        // (e.g. a string/date column passed to a numeric aggregate, which is already
+        // invalid SQL the emitter would reject at run time). IsRequired is always
+        // false: Sum/Avg can return NULL over an empty or all-null group, regardless
+        // of the argument column's own required-ness.
+        private static (string ClrTypeName, bool IsRequired, string ReaderCall)? PromoteSumAvgType(
+            string kindName, string argClrTypeName)
+        {
+            if (kindName == "Sum")
+            {
+                return argClrTypeName switch
+                {
+                    "short" or "int" => ("long", false, "GetInt64"),
+                    "long" => ("decimal", false, "GetDecimal"),
+                    "decimal" => ("decimal", false, "GetDecimal"),
+                    "double" or "float" => ("double", false, "GetDouble"),
+                    _ => null
+                };
+            }
+
+            return argClrTypeName switch
+            {
+                "short" or "int" or "long" or "decimal" => ("decimal", false, "GetDecimal"),
+                "double" or "float" => ("double", false, "GetDouble"),
+                _ => null
+            };
+        }
+
+        // Mirrors SqlServerEmitter.Aggregate/PgEmitter.Aggregate exactly -- any
+        // divergence here would bake different SQL than the runtime path executes.
+        private static string AggregateSql(
+            string kindName, string function, string argument, string? argClrTypeName, bool isSqlServer)
+        {
+            if (kindName == "Count")
+            {
+                return isSqlServer ? $"count_big({argument})" : $"count({argument})";
+            }
+
+            if (isSqlServer && kindName == "Avg" && argClrTypeName is "short" or "int" or "long")
+            {
+                return $"avg(CAST({argument} AS DECIMAL(38, 6)))";
+            }
+
+            // SQL Server accumulates SUM using the argument's own declared type, so
+            // casting only the final result is too late -- the running total can
+            // already have overflowed int/bigint before that cast ever applies.
+            // Casting the argument makes the accumulator itself the wider type.
+            if (isSqlServer && kindName == "Sum" && argClrTypeName is "short" or "int")
+            {
+                return $"sum(CAST({argument} AS BIGINT))";
+            }
+
+            if (isSqlServer && kindName == "Sum" && argClrTypeName == "long")
+            {
+                return $"sum(CAST({argument} AS DECIMAL(38, 0)))";
+            }
+
+            var sql = $"{function}({argument})";
+
+            if (!isSqlServer && kindName == "Sum" && argClrTypeName == "float")
+            {
+                return $"CAST({sql} AS DOUBLE PRECISION)";
+            }
+
+            return sql;
         }
 
         // The rendered SQL for a bare aggregate call, without any alias.
@@ -1028,6 +1248,24 @@ internal static class BakedChainWalker
         // body that cannot be baked, makes the whole chain unbakeable.
         public BakedCte? ResolveCte(ExpressionSyntax expression)
         {
+            // A local/field holding the CTE declaration, e.g.
+            // var cte = body.AsCte<Ranked>("ranked"); ... .With(cte) ...
+            // -- the canonical AsCte usage, since .With() takes the CteClause and
+            // the typed table reference (`new Ranked()`) is a separate value.
+            if (expression is not InvocationExpressionSyntax
+                && ResolveDeclaredExpression(expression) is { } declaredCte)
+            {
+                expression = declaredCte;
+            }
+
+            if (expression is InvocationExpressionSyntax
+                {
+                    Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "AsCte" }
+                } asCteInvocation)
+            {
+                return TryGetCteFromAsCte(asCteInvocation, _model);
+            }
+
             if (expression is not InvocationExpressionSyntax
                 {
                     Expression: MemberAccessExpressionSyntax { Name.Identifier.Text: "Named" },
@@ -1051,6 +1289,38 @@ internal static class BakedChainWalker
 
             var body = TryGetSpec(buildInvocation, _model, out _);
             return body is null ? null : new BakedCte(nameLiteral.Token.ValueText, body);
+        }
+
+        // A local or field's own initializer expression, e.g. the `body.AsCte<Ranked>(...)`
+        // in `var cte = body.AsCte<Ranked>("ranked");`. Unlike ResolveBuildChain (which
+        // requires the initializer to already be a specific shape), this just unwraps the
+        // indirection -- the caller decides what shape the result must be. Returns null
+        // unless the symbol is assigned exactly once, at its declaration (mirrors
+        // ResolveBuilderLocal): a later reassignment (cte = other.AsCte<T>(...)) would
+        // otherwise bake the ORIGINAL definition while runtime execution -- which reads
+        // the local's current value at the .With(cte) call site -- uses the replacement.
+        private ExpressionSyntax? ResolveDeclaredExpression(ExpressionSyntax expression)
+        {
+            var symbol = _model.GetSymbolInfo(expression).Symbol;
+            if (symbol is not (ILocalSymbol or IFieldSymbol))
+            {
+                return null;
+            }
+
+            var declaration = symbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax();
+            var initializer = declaration switch
+            {
+                VariableDeclaratorSyntax variable => variable.Initializer?.Value,
+                PropertyDeclarationSyntax property => property.Initializer?.Value,
+                _ => null
+            };
+
+            if (initializer is null || IsReassigned(symbol, declaration!, _model))
+            {
+                return null;
+            }
+
+            return initializer;
         }
 
         // The CTE body is written inline as db.Select(...)....Build(), or held in
@@ -1422,24 +1692,38 @@ internal static class BakedChainWalker
                 return null;
             }
 
-            if (ResolveColumn(member.Expression) is not { } left)
+            string opLeftAlias, opLeftDbName;
+            string? opLeftExpr = null;
+            if (ResolveColumn(member.Expression) is { } left)
+            {
+                opLeftAlias = left.TableAlias;
+                opLeftDbName = left.DbName;
+            }
+            // aggregate.Eq/Ne/Gt/Gte/Lt/Lte(value) -- the typed Aggregate<T> comparison
+            // form, e.g. Sql.Count().Gt(2L). Column<T>'s own comparison methods never
+            // reach here (ResolveColumn already matched them above).
+            else if (ResolveAggregateSql(member.Expression) is { } leftAggregate)
+            {
+                (opLeftAlias, opLeftDbName, opLeftExpr) = ("", "", leftAggregate);
+            }
+            else
             {
                 return null;
             }
 
             if (ResolveColumn(conditionArgs[0].Expression) is { } right)
             {
-                return new BakedCondition(left.TableAlias, left.DbName, right.TableAlias, right.DbName, op: op);
+                return new BakedCondition(opLeftAlias, opLeftDbName, right.TableAlias, right.DbName, opLeftExpr, op: op);
             }
 
             if (ResolveConvertSql(conditionArgs[0].Expression) is { } convertSql)
             {
-                return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op, rightExpression: convertSql);
+                return new BakedCondition(opLeftAlias, opLeftDbName, null, null, opLeftExpr, op: op, rightExpression: convertSql);
             }
 
             if (ResolveTSqlCallSql(conditionArgs[0].Expression) is { } callSql)
             {
-                return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op, rightExpression: callSql);
+                return new BakedCondition(opLeftAlias, opLeftDbName, null, null, opLeftExpr, op: op, rightExpression: callSql);
             }
 
             // Only a value right side -- Eq(T), Like(string) -- binds a parameter.
@@ -1452,7 +1736,7 @@ internal static class BakedChainWalker
                 return null;
             }
 
-            return new BakedCondition(left.TableAlias, left.DbName, null, null, op: op);
+            return new BakedCondition(opLeftAlias, opLeftDbName, null, null, opLeftExpr, op: op);
         }
 
         // Expr and Column<T> operands become SQL text; everything else becomes a bind.
