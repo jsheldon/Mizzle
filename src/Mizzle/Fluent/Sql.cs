@@ -34,6 +34,14 @@ public static class Sql
     /// <summary>Subtracts the right expression from the left, e.g. for a guarded decrement.</summary>
     public static BinaryExpr Subtract(Expr left, Expr right) => new(BinaryOp.Subtract, left, right);
 
+    /// <summary>
+    ///     The next value from a database sequence -- e.g. an INSERT value for a counter column
+    ///     backed by a real SEQUENCE object, not an application-generated one. Renders as
+    ///     <c>NEXT VALUE FOR &lt;sequence&gt;</c> on SQL Server and <c>nextval('&lt;sequence&gt;')</c>
+    ///     on Postgres. <paramref name="sequence"/> may be schema-qualified (e.g. "dbo.sappt_nbr").
+    /// </summary>
+    public static NextValueExpr NextValueFor(string sequence) => new(sequence);
+
     private static BinaryExpr Fold(BinaryOp op, Expr[] conditions)
     {
         if (conditions.Length < 2)

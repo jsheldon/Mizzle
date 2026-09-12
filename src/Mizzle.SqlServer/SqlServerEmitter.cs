@@ -295,6 +295,7 @@ public sealed class SqlServerEmitter : ISqlEmitter
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
         CaseExpr @case => Case(@case),
         RowNumberExpr rowNumber => RowNumber(rowNumber),
+        NextValueExpr next => $"NEXT VALUE FOR {QualifiedIdentifier(next.Sequence)}",
         _ => throw new NotSupportedException($"Unsupported expression {expr.GetType().Name}.")
     };
 
@@ -391,4 +392,8 @@ public sealed class SqlServerEmitter : ISqlEmitter
     };
 
     internal static string Quote(string identifier) => $"[{identifier.Replace("]", "]]", StringComparison.Ordinal)}]";
+
+    // "dbo.sappt_nbr" -> "[dbo].[sappt_nbr]"; "sappt_nbr" -> "[sappt_nbr]".
+    private static string QualifiedIdentifier(string name)
+        => string.Join('.', name.Split('.').Select(Quote));
 }

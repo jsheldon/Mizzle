@@ -246,6 +246,7 @@ public sealed class PgEmitter : ISqlEmitter
         CoalesceExpr c => $"coalesce({string.Join(", ", c.Args.Select(Expr))})",
         CaseExpr @case => Case(@case),
         RowNumberExpr rowNumber => RowNumber(rowNumber),
+        NextValueExpr next => $"nextval('{next.Sequence.Replace("'", "''", StringComparison.Ordinal)}')",
         _ => throw new NotSupportedException($"Unsupported expression {expr.GetType().Name}.")
     };
 

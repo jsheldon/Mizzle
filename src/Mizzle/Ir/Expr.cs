@@ -65,6 +65,11 @@ public sealed record AggregateExpr(AggregateKind Kind, Expr? Arg) : Expr;
 
 public sealed record CallExpr(string Name, EquatableList<Expr> Args, DialectKind Dialect) : Expr;
 
+// The next value from a database sequence: NEXT VALUE FOR <seq> on SQL Server,
+// nextval('<seq>') on Postgres. Portable across both dialects, so it isn't a CallExpr
+// (SQL Server's syntax isn't a function call) and needs no Feature/CapabilityChecker gate.
+public sealed record NextValueExpr(string Sequence) : Expr;
+
 // T-SQL CONVERT(type, expr [, style]). SqlType is a type name and Style is a
 // T-SQL style code, not values, so neither is parameterized.
 public sealed record ConvertExpr(string SqlType, Expr Value, int? Style = null) : Expr;

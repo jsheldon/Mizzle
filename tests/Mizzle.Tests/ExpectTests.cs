@@ -71,6 +71,49 @@ public sealed class ExpectTests
     }
 
     [Fact]
+    public void SqlServer_next_value_for_renders_schema_qualified_sequence()
+    {
+        var sql = new SqlServerEmitter().Emit(
+            new InsertQuery(
+                Into: new FromSource("appointments", "dbo", "a"),
+                Columns: ["appt_nbr"],
+                ValuesRows: [[Sql.NextValueFor("dbo.sappt_nbr")]],
+                FromSelect: null, Returning: [], With: [], RecursiveWith: false),
+            []);
+        Assert.Equal(
+            "INSERT INTO [dbo].[appointments] ([appt_nbr]) VALUES (NEXT VALUE FOR [dbo].[sappt_nbr])",
+            sql.Sql);
+    }
+
+    [Fact]
+    public void SqlServer_next_value_for_renders_unqualified_sequence()
+    {
+        var sql = new SqlServerEmitter().Emit(
+            new InsertQuery(
+                Into: new FromSource("t", null, "t"),
+                Columns: ["c"],
+                ValuesRows: [[Sql.NextValueFor("sappt_nbr")]],
+                FromSelect: null, Returning: [], With: [], RecursiveWith: false),
+            []);
+        Assert.Equal("INSERT INTO [t] ([c]) VALUES (NEXT VALUE FOR [sappt_nbr])", sql.Sql);
+    }
+
+    [Fact]
+    public void Postgres_next_value_for_renders_nextval_call()
+    {
+        var sql = new PgEmitter().Emit(
+            new InsertQuery(
+                Into: new FromSource("appointments", "public", "a"),
+                Columns: ["appt_nbr"],
+                ValuesRows: [[Sql.NextValueFor("public.sappt_nbr")]],
+                FromSelect: null, Returning: [], With: [], RecursiveWith: false),
+            []);
+        Assert.Equal(
+            "INSERT INTO \"public\".\"appointments\" (\"appt_nbr\") VALUES (nextval('public.sappt_nbr'))",
+            sql.Sql);
+    }
+
+    [Fact]
     public void Version_column_missing_from_where_throws()
     {
         var table = new VersionedUsers();
