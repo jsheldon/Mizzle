@@ -65,6 +65,43 @@ public sealed class PostgresDb : IQueryExecutor
         return found;
     }
 
+    /// <summary>
+    ///     Checks several table/column pairs in a single round trip, for callers that probe
+    ///     multiple schema-shape flags at once (e.g. tenants whose live DB schema can drift, where
+    ///     probing every known flag per-request would otherwise mean one round trip per flag).
+    /// </summary>
+    /// <param name="checks">The table/column pairs to check. Each table's own
+    ///     <see cref="ITable.Name"/>/<see cref="ITable.Schema"/> are used, not its alias.</param>
+    /// <param name="cancellationToken">A token to cancel the query.</param>
+    /// <returns>
+    ///     The subset of <paramref name="checks"/> that exist, as (table name, column name) pairs.
+    ///     Check membership with the same names you passed in, e.g.
+    ///     <c>result.Contains((table.Name, column.Name))</c>.
+    /// </returns>
+    public async Task<IReadOnlySet<(string Table, string Column)>> ColumnsExistAsync(
+        IReadOnlyList<(ITable Table, IColumn Column)> checks,
+        CancellationToken cancellationToken = default)
+    {
+        if (checks.Count == 0)
+            return new HashSet<(string, string)>();
+
+        var isc = new InformationSchemaColumns();
+        var clauses = checks.Select(check =>
+        {
+            Expr clause = Sql.And(isc.TableName.Eq(check.Table.Name), isc.ColumnName.Eq(check.Column.Name));
+            return check.Table.Schema is not null
+                ? Sql.And(clause, isc.TableSchema.Eq(check.Table.Schema!))
+                : clause;
+        }).ToArray();
+
+        var rows = await Select(isc.TableName, isc.ColumnName)
+            .From(isc)
+            .Where(Sql.Or(clauses))
+            .ToListAsync(static r => (r.GetString(0), r.GetString(1)), cancellationToken);
+
+        return rows.ToHashSet();
+    }
+
     public Task Transaction(Func<IMizzleTransaction, Task> body, CancellationToken cancellationToken = default)
         => Transaction(async transaction =>
         {

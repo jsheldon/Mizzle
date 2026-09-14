@@ -385,6 +385,37 @@ Write projections are mapped at runtime rather than baked, but the projection
 diagnostics still run at build time, so a returning-into-T mismatch is a
 compile error rather than a runtime throw.
 
+## Checking the live schema
+
+`SqlDb`/`PostgresDb` expose `ColumnExistsAsync` and `ColumnsExistAsync`, backed
+by the ANSI-standard `information_schema.columns` view -- useful when
+different environments (or tenants sharing a connection string) can have
+drifted schemas and a query needs to branch on whether a column is present
+before referencing it. Both are ordinary runtime queries, not baked: schema
+checks like this are rare and typically cached by the caller, not a
+per-request hot path.
+
+```csharp
+var hasColumn = await db.ColumnExistsAsync(person, person.MiddleName);
+```
+
+Checking several table/column pairs individually means one round trip per
+check. `ColumnsExistAsync` checks a batch of pairs in a single round trip and
+returns the subset that exist, as `(table name, column name)` pairs:
+
+```csharp
+var found = await db.ColumnsExistAsync(
+[
+    (person, person.MiddleName),
+    (address, address.CountyCode),
+]);
+
+var hasMiddleName = found.Contains((person.Name, person.MiddleName.Name));
+```
+
+Both use each table's own `Name`/`Schema`, not its alias, so they give the
+right answer even when the instance was constructed with `WithAlias(...)`.
+
 ## How queries execute
 
 Every query builds an immutable IR graph. That is just a small object model for
