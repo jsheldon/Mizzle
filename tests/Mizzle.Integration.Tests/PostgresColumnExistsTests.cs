@@ -111,6 +111,30 @@ public sealed class PostgresColumnExistsTests : IClassFixture<PostgresFixture>
 
         Assert.Empty(found);
     }
+
+    [DockerFact]
+    public async Task ColumnsExistAsync_works_with_exactly_one_check()
+    {
+        await using var conn = await _fx.DataSource.OpenConnectionAsync();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS public.users (
+                  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                  email text NOT NULL
+                );
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var db = new PostgresDb(_fx.DataSource);
+        var users = new PostgresColumnExistsUsers();
+
+        var found = await db.ColumnsExistAsync([(users, users.Email)]);
+
+        Assert.Single(found);
+        Assert.Contains(("users", "email"), found);
+    }
 }
 
 file sealed class PostgresColumnExistsUsers : PgTable<PostgresColumnExistsUsers>

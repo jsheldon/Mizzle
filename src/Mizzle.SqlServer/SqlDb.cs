@@ -94,9 +94,10 @@ public sealed class SqlDb : IQueryExecutor
                 : clause;
         }).ToArray();
 
+        var predicate = clauses.Length == 1 ? clauses[0] : Sql.Or(clauses);
         var rows = await Select(isc.TableName, isc.ColumnName)
             .From(isc)
-            .Where(Sql.Or(clauses))
+            .Where(predicate)
             .ToListAsync(static r => (r.GetString(0), r.GetString(1)), cancellationToken);
 
         return rows.ToHashSet();

@@ -123,6 +123,33 @@ public sealed class SqlServerColumnExistsTests : IClassFixture<SqlServerFixture>
 
         Assert.Empty(found);
     }
+
+    [DockerFact]
+    public async Task ColumnsExistAsync_works_with_exactly_one_check()
+    {
+        await using var conn = await _fx.DataSource.OpenConnectionAsync();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                IF OBJECT_ID(N'dbo.users', N'U') IS NULL
+                BEGIN
+                  CREATE TABLE dbo.users (
+                    id int IDENTITY(1,1) PRIMARY KEY,
+                    email nvarchar(255) NOT NULL
+                  );
+                END
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var db = new SqlDb(_fx.DataSource);
+        var users = new SqlServerColumnExistsUsers();
+
+        var found = await db.ColumnsExistAsync([(users, users.Email)]);
+
+        Assert.Single(found);
+        Assert.Contains(("users", "email"), found);
+    }
 }
 
 file sealed class SqlServerColumnExistsUsers : SqlTable<SqlServerColumnExistsUsers>
