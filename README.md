@@ -412,7 +412,31 @@ with a shape cache. Typed paging uses the generated mapper with the normal pagin
 executor so `includeTotal` and cursor behavior stay in one place.
 
 Setting `<MizzleQueryMode>Strict</MizzleQueryMode>` in your project turns any
-non-compilable query into a build error.
+non-compilable query into a build error (`MIZ002`).
+
+### Opting a single call site out of Strict mode
+
+`MIZ002` is an ordinary Roslyn diagnostic, so it's suppressible with the
+standard .NET mechanisms -- no Mizzle-specific escape hatch needed. Prefer
+`[SuppressMessage]` over a bare `#pragma`: it forces a written justification,
+which shows up in IDE tooltips and code review instead of disappearing into a
+silent pragma.
+
+```csharp
+[SuppressMessage("Mizzle", "MIZ002", Justification = "Column list is built at runtime from tenant config; can't be a static chain.")]
+async Task<Practice?> ReadPracticeAsync(string practiceId)
+{
+    // a query shape Mizzle's compiler can't bake, e.g. dynamic column selection
+}
+```
+
+A line-scoped `#pragma warning disable MIZ002` / `#pragma warning restore MIZ002`
+pair works too, but carries no justification and is easier to miss in review.
+
+Reach for this only when a call site genuinely can't take a static shape (for
+example, selecting a column list built at runtime). It turns a hard build
+error back into whatever `MIZ002`'s configured severity is elsewhere in the
+project -- it does not silence the analyzer project-wide.
 
 ## What it deliberately doesn't do
 

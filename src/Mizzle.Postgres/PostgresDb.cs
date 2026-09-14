@@ -39,6 +39,32 @@ public sealed class PostgresDb : IQueryExecutor
     public DeleteBuilder DeleteFrom(ITable table)
         => new(table, this);
 
+    /// <summary>
+    ///     Checks whether <paramref name="column"/> exists on <paramref name="table"/> in the
+    ///     connected database's live schema, via the ANSI-standard <c>information_schema.columns</c>
+    ///     view -- useful when different environments (or tenants sharing this connection string)
+    ///     can have drifted schemas and a query needs to branch on whether a column is present
+    ///     before referencing it. An ordinary runtime query, not baked: schema checks like this are
+    ///     rare and typically cached by the caller, not a per-request hot path.
+    /// </summary>
+    /// <param name="table">The table to check. Its own <see cref="ITable.Name"/>/<see cref="ITable.Schema"/>
+    ///     are used, not its alias, so this gives the right answer even if the instance was
+    ///     constructed with <c>WithAlias(...)</c>.</param>
+    /// <param name="column">The column to check for, e.g. <c>person.PersonId</c>.</param>
+    /// <param name="cancellationToken">A token to cancel the query.</param>
+    public async Task<bool> ColumnExistsAsync(ITable table, IColumn column, CancellationToken cancellationToken = default)
+    {
+        var isc = new InformationSchemaColumns();
+        var found = await Select(isc.ColumnName)
+            .From(isc)
+            .Where(isc.TableName.Eq(table.Name))
+            .Where(isc.ColumnName.Eq(column.Name))
+            .WhereIf(table.Schema is not null, isc.TableSchema.Eq(table.Schema!))
+            .FirstOrDefaultAsync(static _ => true, cancellationToken);
+
+        return found;
+    }
+
     public Task Transaction(Func<IMizzleTransaction, Task> body, CancellationToken cancellationToken = default)
         => Transaction(async transaction =>
         {
